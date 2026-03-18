@@ -1,0 +1,6 @@
+mcp[cli]>=1.9.0
+mssql-python
+uvicorn
+cryptography
+pytest
+pytest-mock

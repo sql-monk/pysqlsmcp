@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+cert.pem
+key.pem
+sqlsmcp.log
+.pytest_cache/
+gen_cert.bat
+test.out
