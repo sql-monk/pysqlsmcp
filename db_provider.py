@@ -6,6 +6,12 @@ import mssql_python
 
 _LOG_PATH = Path(__file__).parent / "sqlsmcp.log"
 
+_SET_PREAMBLE = """
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SET LOCK_TIMEOUT 1000;
+SET DEADLOCK_PRIORITY LOW;
+"""
+
 _LIST_DATABASES_SQL = """
 SELECT name FROM sys.databases
 WHERE state_desc = 'ONLINE'
@@ -26,11 +32,11 @@ class DbProvider:
             return (
                 f"SERVER={self._server};DATABASE={self._database};"
                 f"UID={self._username};PWD={self._password};"
-                "TrustServerCertificate=yes;"
+                "TrustServerCertificate=yes;CommandTimeout=60;"
             )
         return (
             f"SERVER={self._server};DATABASE={self._database};"
-            "Trusted_Connection=yes;TrustServerCertificate=yes;"
+            "Trusted_Connection=yes;TrustServerCertificate=yes;CommandTimeout=60;"
         )
 
     def execute_query(self, query: str, params: tuple | None = None) -> str:
@@ -38,6 +44,7 @@ class DbProvider:
             conn = mssql_python.connect(self._connection_string())
             try:
                 cursor = conn.cursor()
+                cursor.execute(_SET_PREAMBLE)
                 cursor.execute(query, params or ())
                 rows = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -70,6 +77,7 @@ class DbProvider:
         conn = mssql_python.connect(self._connection_string())
         try:
             cursor = conn.cursor()
+            cursor.execute(_SET_PREAMBLE)
             cursor.execute(_LIST_DATABASES_SQL)
             rows = cursor.fetchall()
         finally:

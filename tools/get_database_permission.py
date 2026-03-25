@@ -1,31 +1,9 @@
+from pathlib import Path
 from typing import Optional
 from db_provider import DbProvider
 
-PERMISSION_QUERY = """
-SELECT
-   @@SERVERNAME                                AS serverName,
-   DB_NAME()                                   AS databaseName,
-   USER_NAME(rm.role_principal_id)             AS roleName,
-   USER_NAME(rm.member_principal_id)           AS userName,
-   p.state_desc,
-   p.permission_name,
-   p.class_desc,
-   CASE WHEN p.class_desc = 'OBJECT_OR_COLUMN'
-        THEN OBJECT_NAME(p.major_id) END        AS objectName,
-   CASE p.class_desc
-       WHEN 'SCHEMA'           THEN SCHEMA_NAME(p.major_id)
-       WHEN 'OBJECT_OR_COLUMN' THEN OBJECT_SCHEMA_NAME(p.major_id)
-   END                                          AS schemaName,
-   USER_NAME(p.grantee_principal_id)            AS granteeName
-FROM sys.database_role_members rm
-    JOIN sys.database_permissions p
-        ON p.grantee_principal_id IN (rm.role_principal_id, rm.member_principal_id)
-WHERE p.type <> 'CO'
-  AND (? IS NULL OR USER_NAME(rm.member_principal_id) LIKE ?)
-  AND (? IS NULL
-       OR (p.class_desc = 'OBJECT_OR_COLUMN' AND OBJECT_NAME(p.major_id) LIKE ?)
-       OR (p.class_desc = 'SCHEMA'           AND SCHEMA_NAME(p.major_id) LIKE ?))
-"""
+_SQL_DIR = Path(__file__).parent / "sql"
+PERMISSION_QUERY = (_SQL_DIR / "get_database_permission.sql").read_text(encoding="utf-8")
 
 
 def _run(db_provider: DbProvider, user_filter: Optional[str] = None, object_filter: Optional[str] = None) -> str:

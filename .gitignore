@@ -8,3 +8,4 @@ sqlsmcp.log
 .pytest_cache/
 gen_cert.bat
 test.out
+.vscode/settings.json
