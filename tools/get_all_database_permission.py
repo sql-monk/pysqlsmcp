@@ -12,14 +12,15 @@ def register(mcp):
         object_filter: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        mcplevel: int = 0,
     ) -> str:
-        master = DbProvider(server, "master", username, password)
+        master = DbProvider(server, "master", username, password, mcplevel)
         databases = master.list_databases()
         all_rows: list = []
         all_columns: list = []
         errors: list = []
         for db in databases:
-            result_json = run_permission(DbProvider(server, db, username, password), user_filter, object_filter)
+            result_json = run_permission(DbProvider(server, db, username, password, mcplevel), user_filter, object_filter)
             result = json.loads(result_json)
             if "error" in result:
                 errors.append({"database": db, **result})

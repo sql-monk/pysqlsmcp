@@ -1,7 +1,6 @@
 SELECT
     CONCAT(
-        CASE WHEN d.referenced_database_name IS NOT NULL
-             THEN QUOTENAME(d.referenced_database_name) + '.' ELSE '' END,
+        QUOTENAME(d.referenced_database_name) + '.',
         QUOTENAME(d.referenced_schema_name), '.',
         QUOTENAME(d.referenced_entity_name)
     )                                           AS ObjectName,

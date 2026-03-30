@@ -21,11 +21,12 @@ ORDER BY name
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None):
+    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, mcplevel: int = 0):
         self._server = server
         self._database = database
         self._username = username
         self._password = password
+        self._mcplevel = mcplevel
 
     def _connection_string(self) -> str:
         if self._username and self._password:
@@ -39,21 +40,99 @@ class DbProvider:
             "Trusted_Connection=yes;TrustServerCertificate=yes;CommandTimeout=60;"
         )
 
+    def _impersonate_sql(self) -> str:
+        if self._mcplevel == 1:
+            safe_db = self._database.replace("'", "''")
+            expected = f"mcp-{safe_db}"
+            return (
+                f"EXECUTE AS USER = N'{expected}';\n"
+                f"DECLARE @__mcp_check NVARCHAR(256) = USER_NAME();\n"
+                f"IF @__mcp_check <> N'{expected}'\n"
+                f"BEGIN\n"
+                f"    REVERT;\n"
+                f"    RAISERROR('MCP impersonation failed: USER_NAME()=[%s]', 16, 1, @__mcp_check);\n"
+                f"END\n"
+            )
+        return (
+            "EXECUTE AS LOGIN = N'mcp-server';\n"
+            "DECLARE @__mcp_check NVARCHAR(256) = SYSTEM_USER;\n"
+            "IF @__mcp_check <> N'mcp-server'\n"
+            "BEGIN\n"
+            "    REVERT;\n"
+            "    RAISERROR('MCP impersonation failed: SYSTEM_USER=[%s]', 16, 1, @__mcp_check);\n"
+            "END\n"
+        )
+
     def execute_query(self, query: str, params: tuple | None = None) -> str:
         try:
             conn = mssql_python.connect(self._connection_string())
             try:
                 cursor = conn.cursor()
                 cursor.execute(_SET_PREAMBLE)
-                cursor.execute(query, params or ())
-                rows = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                result = {
-                    "query": query,
-                    "rowCount": len(rows),
-                    "columns": columns,
-                    "rows": [list(row) for row in rows],
-                }
+                cursor.execute(self._impersonate_sql())
+                try:
+                    cursor.execute(query, params or ())
+                    if cursor.description:
+                        rows = cursor.fetchall()
+                        columns = [desc[0] for desc in cursor.description]
+                        result = {
+                            "query": query,
+                            "rowCount": len(rows),
+                            "columns": columns,
+                            "rows": [list(row) for row in rows],
+                        }
+                    else:
+                        result = {
+                            "query": query,
+                            "rowCount": cursor.rowcount if cursor.rowcount >= 0 else 0,
+                        }
+                finally:
+                    try:
+                        cursor.execute("REVERT;")
+                    except Exception:
+                        pass
+            finally:
+                conn.close()
+        except Exception as e:
+            sql_error_number = None
+            sql_state = None
+            if hasattr(e, "args") and e.args:
+                if len(e.args) >= 2:
+                    sql_error_number = e.args[0]
+                    sql_state = e.args[1]
+                else:
+                    sql_error_number = e.args[0]
+            result = {
+                "error": str(e),
+                "query": query,
+                "sqlErrorNumber": sql_error_number,
+                "sqlState": sql_state,
+            }
+        return json.dumps(result, default=str)
+
+    def explain_query(self, query: str) -> str:
+        try:
+            conn = mssql_python.connect(self._connection_string())
+            try:
+                cursor = conn.cursor()
+                cursor.execute(_SET_PREAMBLE)
+                cursor.execute(self._impersonate_sql())
+                try:
+                    cursor.execute("SET SHOWPLAN_XML ON;")
+                    cursor.execute(query)
+                    row = cursor.fetchone()
+                    plan_xml = row[0] if row else None
+                    cursor.execute("SET SHOWPLAN_XML OFF;")
+                    result = {"query": query, "plan": plan_xml}
+                finally:
+                    try:
+                        cursor.execute("SET SHOWPLAN_XML OFF;")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("REVERT;")
+                    except Exception:
+                        pass
             finally:
                 conn.close()
         except Exception as e:
@@ -74,15 +153,10 @@ class DbProvider:
         return json.dumps(result, default=str)
 
     def list_databases(self) -> list[str]:
-        conn = mssql_python.connect(self._connection_string())
-        try:
-            cursor = conn.cursor()
-            cursor.execute(_SET_PREAMBLE)
-            cursor.execute(_LIST_DATABASES_SQL)
-            rows = cursor.fetchall()
-        finally:
-            conn.close()
-        return [row[0] for row in rows]
+        result = json.loads(self.execute_query(_LIST_DATABASES_SQL))
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        return [row[0] for row in result["rows"]]
 
     def _log(self, tool_name: str, **fields) -> None:
         timestamp = datetime.datetime.now().isoformat(timespec="seconds")
