@@ -3,6 +3,7 @@ import datetime
 from pathlib import Path
 
 import mssql_python
+import re
 
 _LOG_PATH = Path(__file__).parent / "sqlsmcp.log"
 
@@ -21,23 +22,24 @@ ORDER BY name
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, mcplevel: int = 0):
+    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, mcplevel: int = 0, timeout: int = 90):
         self._server = server
         self._database = database
         self._username = username
         self._password = password
         self._mcplevel = mcplevel
+        self._timeout = timeout
 
     def _connection_string(self) -> str:
         if self._username and self._password:
             return (
                 f"SERVER={self._server};DATABASE={self._database};"
                 f"UID={self._username};PWD={self._password};"
-                "TrustServerCertificate=yes;CommandTimeout=60;"
+                "TrustServerCertificate=yes;"
             )
         return (
             f"SERVER={self._server};DATABASE={self._database};"
-            "Trusted_Connection=yes;TrustServerCertificate=yes;CommandTimeout=60;"
+            "Trusted_Connection=yes;TrustServerCertificate=yes;"
         )
 
     def _impersonate_sql(self) -> str:
@@ -64,8 +66,10 @@ class DbProvider:
         )
 
     def execute_query(self, query: str, params: tuple | None = None) -> str:
+        query = re.sub(r'(?i)\brevert\b', '/*revert*/', query)
         try:
             conn = mssql_python.connect(self._connection_string())
+            conn.timeout = self._timeout
             try:
                 cursor = conn.cursor()
                 cursor.execute(_SET_PREAMBLE)
@@ -113,6 +117,7 @@ class DbProvider:
     def explain_query(self, query: str) -> str:
         try:
             conn = mssql_python.connect(self._connection_string())
+            conn.timeout = self._timeout
             try:
                 cursor = conn.cursor()
                 cursor.execute(_SET_PREAMBLE)

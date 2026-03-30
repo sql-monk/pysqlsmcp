@@ -9,3 +9,4 @@ sqlsmcp.log
 gen_cert.bat
 test.out
 .vscode/settings.json
+tests/
