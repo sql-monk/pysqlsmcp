@@ -13,64 +13,57 @@ Python MCP (Model Context Protocol) server for safe, read-oriented access to Mic
 ## Quick start
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 
-python gen_cert.py             # creates cert.pem + key.pem (self-signed, localhost/127.0.0.1)
-python server.py --certfile cert.pem --keyfile key.pem
+# interactive installer (certificates, SQL users, agent config)
+python install.py
+
+# start the server
+python server.py
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `0.0.0.0` | Bind address |
-| `--port` | `8444` | Bind port |
-| `--certfile` | *(required)* | Path to TLS certificate |
-| `--keyfile` | *(required)* | Path to TLS private key |
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `4433` | Bind port |
+| `--certfile` | `cert.pem` | Path to TLS certificate |
+| `--keyfile` | `key.pem` | Path to TLS private key |
 
 ---
 
-## Installation & configuration
+## Installation (`install.py`)
 
-### SQL Server setup
+The interactive installer handles all setup steps. Run it once after cloning:
 
-The file [`tools/sql/login_and_user_creation.sql`](tools/sql/login_and_user_creation.sql) contains the reference DDL.
+```bash
+pip install -r requirements.txt
 
-#### Server level — `mcp-server` login
-
-```sql
-CREATE LOGIN [mcp-server] WITH PASSWORD = '[strong pwd]', CHECK_POLICY = ON;
-
--- Read-only server roles (SQL Server 2022+)
-ALTER SERVER ROLE [##MS_ServerStateReader##]            ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_ServerPerformanceStateReader##] ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_DefinitionReader##]             ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_SecurityDefinitionReader##]     ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_DatabaseConnector##]            ADD MEMBER [mcp-server];
+# interactive installer (certificates, SQL users, agent config)
+python install.py
 ```
 
-#### Database level — `mcp-{database}` user
+The installer walks through three stages:
 
-For each database where `mcplevel=1` is used:
+### 1. TLS certificates
 
-```sql
-CREATE LOGIN  [mcp-YourDatabase] WITH PASSWORD = '[strong pwd]', CHECK_POLICY = ON;
-CREATE USER   [mcp-YourDatabase] FROM LOGIN [mcp-YourDatabase];
-CREATE ROLE   [db_mcp_YourDatabase];
+If `cert.pem` and `key.pem` do not exist in the project root, a self-signed certificate is generated automatically (localhost / 127.0.0.1, valid for 1 year). Existing certificates are kept as-is.
 
-ALTER ROLE [db_mcp_YourDatabase] ADD MEMBER [mcp-YourDatabase];
+### 2. SQL Server users
 
-GRANT VIEW DATABASE STATE             TO [db_mcp_YourDatabase];
-GRANT VIEW ANY DEFINITION             TO [db_mcp_YourDatabase];
-GRANT VIEW DATABASE PERFORMANCE STATE TO [db_mcp_YourDatabase];
-GRANT VIEW DATABASE SECURITY STATE    TO [db_mcp_YourDatabase];
+The installer asks for a SQL Server instance name and then offers to create:
 
--- Deny data access — metadata only
-ALTER ROLE [db_denydatareader] ADD MEMBER [mcp-YourDatabase];
-ALTER ROLE [db_denydatawriter] ADD MEMBER [mcp-YourDatabase];
-```
+| Option | Script | What it creates |
+|--------|--------|-----------------|
+| **Server-level** | [`scripts/mcp-server.sql`](scripts/mcp-server.sql) | Login `mcp-server` + read-only server roles (SQL Server 2022+) |
+| **Database-level** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Login `mcp-{database}`, user, role with metadata-only grants; data read/write denied |
 
-The connecting login must also be granted:
+You can create database-level users for multiple databases in one session.
+
+> **Security:** passwords are generated at runtime using `secrets` (40 chars, mixed case + digits + specials). They are passed to `mssql_python` in memory and **never stored or displayed**.
+
+The connection to SQL Server uses Windows Authentication (`Trusted_Connection=yes`), so run the installer under an account that has `sysadmin` or `securityadmin` rights on the target instance.
+
+After creating the logins you still need to grant `IMPERSONATE` to the connecting login:
 
 ```sql
 -- For mcplevel=0:
@@ -80,16 +73,27 @@ GRANT IMPERSONATE ON LOGIN::[mcp-server] TO [connecting_login];
 GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 ```
 
-### VS Code MCP configuration
+### 3. Agent integration
 
-Add to `.vscode/mcp.json`:
+The installer can register pysqlsmcp in agent config files so the MCP server is available immediately.
+
+It asks for host/port (defaults: `localhost:4433`), then searches for config files:
+
+| Agent | Config file | Key |
+|-------|------------|-----|
+| VS Code | `mcp.json` | `servers.pysqlsmcp` |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp` |
+
+Search starts from `%APPDATA%` (known locations) and a user-specified directory (default: home folder). You can select which found configs to patch.
+
+Example resulting VS Code entry (`.vscode/mcp.json`):
 
 ```json
 {
   "servers": {
     "pysqlsmcp": {
       "type": "http",
-      "url": "https://localhost:8444/mcp"
+      "url": "https://localhost:4433/mcp/"
     }
   }
 }
@@ -181,7 +185,10 @@ When `username`/`password` are omitted, Windows Authentication (`Trusted_Connect
 ```
 server.py                  — Uvicorn HTTPS entry point, registers all tools
 db_provider.py             — Connection, SET preamble, EXECUTE AS, query execution
-gen_cert.py                — Generates self-signed TLS cert (cert.pem + key.pem)
+install.py                 — Interactive installer (certs, SQL users, agent config)
+scripts/
+  mcp-server.sql           — Server-level login DDL template
+  mcp-database.sql         — Database-level user/role DDL template
 tools/
   execute_query.py         — executeQuery tool
   explain_query.py         — explainQuery tool
@@ -191,7 +198,6 @@ tools/
   sql/
     get_database_permission.sql      — Permission query
     required_additional_permission.sql — Dependency query
-    login_and_user_creation.sql      — Reference DDL for mcp-server setup
 ```
 
 ## Logs

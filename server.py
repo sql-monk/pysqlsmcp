@@ -16,10 +16,10 @@ reg5(mcp)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8444)
-    parser.add_argument("--certfile", required=True)
-    parser.add_argument("--keyfile", required=True)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=4433)
+    parser.add_argument("--certfile", required=True, default="cert.pem")
+    parser.add_argument("--keyfile", required=True, default="key.pem")
     args = parser.parse_args()
     uvicorn.run(
         mcp.streamable_http_app(),

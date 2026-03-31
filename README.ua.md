@@ -13,64 +13,58 @@ Python MCP (Model Context Protocol) сервер для безпечного, о
 ## Швидкий старт
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 
-python gen_cert.py             # створює cert.pem + key.pem (самопідписаний, localhost/127.0.0.1)
-python server.py --certfile cert.pem --keyfile key.pem
+# інтерактивний інсталятор (сертифікати, SQL-користувачі, конфіг агентів)
+python install.py
+
+# запуск сервера
+python server.py
 ```
 
 | Прапорець | За замовчуванням | Опис |
 |-----------|-----------------|------|
-| `--host` | `0.0.0.0` | Адреса прив'язки |
-| `--port` | `8444` | Порт |
-| `--certfile` | *(обов'язковий)* | Шлях до TLS-сертифіката |
-| `--keyfile` | *(обов'язковий)* | Шлях до приватного ключа TLS |
+| `--host` | `127.0.0.1` | Адреса прив'язки |
+| `--port` | `4433` | Порт |
+| `--certfile` | `cert.pem` | Шлях до TLS-сертифіката |
+| `--keyfile` | `key.pem` | Шлях до приватного ключа TLS |
 
 ---
 
-## Встановлення та конфігурація
+## Встановлення (`install.py`)
 
-### Налаштування SQL Server
+Інтерактивний інсталятор виконує всі кроки налаштування. Запустіть один раз після клонування:
 
-Файл [`tools/sql/login_and_user_creation.sql`](tools/sql/login_and_user_creation.sql) містить еталонний DDL.
+```bash
+pip install -r requirements.txt
 
-#### Рівень сервера — логін `mcp-server`
+# інтерактивний інсталятор (сертифікати, SQL-користувачі, конфіг агентів)
+python install.py
 
-```sql
-CREATE LOGIN [mcp-server] WITH PASSWORD = '[strong pwd]', CHECK_POLICY = ON;
-
--- Серверні ролі тільки для читання (SQL Server 2022+)
-ALTER SERVER ROLE [##MS_ServerStateReader##]            ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_ServerPerformanceStateReader##] ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_DefinitionReader##]             ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_SecurityDefinitionReader##]     ADD MEMBER [mcp-server];
-ALTER SERVER ROLE [##MS_DatabaseConnector##]            ADD MEMBER [mcp-server];
 ```
 
-#### Рівень бази даних — користувач `mcp-{database}`
+Інсталятор проходить через три етапи:
 
-Для кожної бази даних, де використовується `mcplevel=1`:
+### 1. TLS-сертифікати
 
-```sql
-CREATE LOGIN  [mcp-YourDatabase] WITH PASSWORD = '[strong pwd]', CHECK_POLICY = ON;
-CREATE USER   [mcp-YourDatabase] FROM LOGIN [mcp-YourDatabase];
-CREATE ROLE   [db_mcp_YourDatabase];
+Якщо `cert.pem` та `key.pem` не існують у кореневій директорії проєкту, самопідписаний сертифікат генерується автоматично (localhost / 127.0.0.1, дійсний 1 рік). Існуючі сертифікати не перезаписуються.
 
-ALTER ROLE [db_mcp_YourDatabase] ADD MEMBER [mcp-YourDatabase];
+### 2. SQL Server користувачі
 
-GRANT VIEW DATABASE STATE             TO [db_mcp_YourDatabase];
-GRANT VIEW ANY DEFINITION             TO [db_mcp_YourDatabase];
-GRANT VIEW DATABASE PERFORMANCE STATE TO [db_mcp_YourDatabase];
-GRANT VIEW DATABASE SECURITY STATE    TO [db_mcp_YourDatabase];
+Інсталятор запитує ім'я екземпляра SQL Server, а потім пропонує створити:
 
--- Заборона доступу до даних — лише метадані
-ALTER ROLE [db_denydatareader] ADD MEMBER [mcp-YourDatabase];
-ALTER ROLE [db_denydatawriter] ADD MEMBER [mcp-YourDatabase];
-```
+| Опція | Скрипт | Що створює |
+|-------|--------|------------|
+| **Рівень сервера** | [`scripts/mcp-server.sql`](scripts/mcp-server.sql) | Логін `mcp-server` + серверні ролі тільки для читання (SQL Server 2022+) |
+| **Рівень бази даних** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Логін `mcp-{database}`, користувач, роль із правами лише на метадані; читання/запис даних заборонено |
 
-Логіну, що підключається, також потрібно надати:
+Можна створити користувачів рівня бази даних для декількох баз за один сеанс.
+
+> **Безпека:** паролі генеруються під час виконання за допомогою `secrets` (40 символів, змішаний регістр + цифри + спецсимволи). Вони передаються до `mssql_python` у пам'яті й **ніколи не зберігаються та не відображаються**.
+
+З'єднання з SQL Server використовує Windows Authentication (`Trusted_Connection=yes`), тому запускайте інсталятор під обліковим записом із правами `sysadmin` або `securityadmin` на цільовому екземплярі.
+
+Після створення логінів потрібно надати право `IMPERSONATE` логіну, що підключається:
 
 ```sql
 -- Для mcplevel=0:
@@ -80,16 +74,27 @@ GRANT IMPERSONATE ON LOGIN::[mcp-server] TO [connecting_login];
 GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 ```
 
-### Конфігурація MCP у VS Code
+### 3. Інтеграція з агентами
 
-Додайте до `.vscode/mcp.json`:
+Інсталятор може зареєструвати pysqlsmcp у конфігураційних файлах агентів, щоб MCP-сервер був доступний одразу.
+
+Запитується хост/порт (за замовчуванням: `localhost:4433`), після чого виконується пошук конфігураційних файлів:
+
+| Агент | Конфігураційний файл | Ключ |
+|-------|---------------------|------|
+| VS Code | `mcp.json` | `servers.pysqlsmcp` |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp` |
+
+Пошук починається з `%APPDATA%` (відомі розташування) та директорії, вказаної користувачем (за замовчуванням: домашня папка). Можна обрати, які знайдені конфіги оновити.
+
+Приклад результату для VS Code (`.vscode/mcp.json`):
 
 ```json
 {
   "servers": {
     "pysqlsmcp": {
       "type": "http",
-      "url": "https://localhost:8444/mcp"
+      "url": "https://localhost:4433/mcp/"
     }
   }
 }
@@ -181,7 +186,10 @@ SET SHOWPLAN_XML OFF;
 ```
 server.py                  — HTTPS точка входу Uvicorn, реєструє всі інструменти
 db_provider.py             — З'єднання, SET-преамбул, EXECUTE AS, виконання запитів
-gen_cert.py                — Генерує самопідписаний TLS-сертифікат (cert.pem + key.pem)
+install.py                 — Інтерактивний інсталятор (сертифікати, SQL-користувачі, конфіг агентів)
+scripts/
+  mcp-server.sql           — DDL-шаблон для логіна серверного рівня
+  mcp-database.sql         — DDL-шаблон для користувача/ролі рівня бази даних
 tools/
   execute_query.py         — інструмент executeQuery
   explain_query.py         — інструмент explainQuery
@@ -191,7 +199,6 @@ tools/
   sql/
     get_database_permission.sql      — Запит прав
     required_additional_permission.sql — Запит залежностей
-    login_and_user_creation.sql      — Еталонний DDL для налаштування mcp-server
 ```
 
 ## Логи
