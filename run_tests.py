@@ -1,394 +1,445 @@
 """
-run_tests.py — Test orchestrator for pysqlsmcp.
+pysqlsmcp Test Orchestrator
+───────────────────────────
+Runs the integration test suite against mcp_test_main / mcp_test_aux,
+displays live progress, and generates a detailed report.
 
 Usage:
-    python run_tests.py --server localhost --database mcp_test_main --database-aux mcp_test_aux --impersonate mcp-server
-    python run_tests.py            # interactive prompt for missing parameters
+    python run_tests.py [--server INSTANCE] [--report FILE]
 
-The script runs every pytest test in the tests/ directory, captures per-test
-results via a custom pytest plugin, then writes a Markdown report to
-  test_YYYYMMDDHHSS.md
+Environment:
+    PYSQLSMCP_TEST_SERVER  — SQL Server instance (default: localhost)
 """
-
-from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
-import textwrap
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).parent
-TESTS_DIR = PROJECT_ROOT / "tests"
+ROOT = Path(__file__).resolve().parent
+TESTS_DIR = ROOT / "tests"
+REPORT_DIR = ROOT / "reports"
 
-# ---------------------------------------------------------------------------
-# Argument / interactive input
-# ---------------------------------------------------------------------------
 
-def _ask(prompt: str, default: str = "") -> str:
-    """Ask the user interactively, returning stripped input."""
-    suffix = f" [{default}]" if default else ""
+# ── colours ──────────────────────────────────────────────────
+
+def _enable_ansi() -> bool:
+    """Try to enable ANSI escape codes on Windows; return True if supported."""
+    if sys.platform != "win32":
+        return True
     try:
-        val = input(f"{prompt}{suffix}: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        sys.exit(1)
-    return val or default
+        import ctypes
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        # STD_OUTPUT_HANDLE = -11, ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        return True
+    except Exception:
+        return False
 
 
-def get_params() -> tuple[str, str, str, str]:
-    parser = argparse.ArgumentParser(
-        description="pysqlsmcp test orchestrator",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--server",       help="SQL Server host/instance")
-    parser.add_argument("--database",     help="Main test database")
-    parser.add_argument("--database-aux", help="Auxiliary test database")
-    parser.add_argument("--impersonate",  help="Login to impersonate")
-    args, _ = parser.parse_known_args()
-
-    server       = args.server       or _ask("SQL Server host/instance", "localhost")
-    database     = args.database     or _ask("Main test database",       "mcp_test_main")
-    database_aux = args.database_aux or _ask("Auxiliary test database",  "mcp_test_aux")
-    impersonate  = args.impersonate  or _ask("Login to impersonate",     "mcp-server")
-
-    if not server:
-        print("ERROR: --server is required."); sys.exit(1)
-    if not database:
-        print("ERROR: --database is required."); sys.exit(1)
-    if not database_aux:
-        print("ERROR: --database-aux is required."); sys.exit(1)
-    if not impersonate:
-        print("ERROR: --impersonate is required."); sys.exit(1)
-
-    return server, database, database_aux, impersonate
+_ANSI = _enable_ansi()
 
 
-# ---------------------------------------------------------------------------
-# Run pytest with JSON-line report plugin
-# ---------------------------------------------------------------------------
-
-_PLUGIN_SOURCE = textwrap.dedent("""\
-import json, sys, time, pytest
-
-class LineReporter:
-    def __init__(self):
-        self._start: dict[str, float] = {}
-
-    def pytest_runtest_logstart(self, nodeid, location):
-        self._start[nodeid] = time.monotonic()
-
-    def pytest_runtest_logreport(self, report):
-        if report.when != "call":
-            if report.failed and report.when in ("setup", "teardown"):
-                pass
-            else:
-                return
-        elapsed = time.monotonic() - self._start.get(report.nodeid, 0)
-        record = {
-            "nodeid": report.nodeid,
-            "outcome": report.outcome,
-            "duration": round(elapsed, 3),
-            "longrepr": str(report.longrepr) if report.longrepr else None,
-        }
-        print("##PYTEST_RECORD##" + json.dumps(record), flush=True)
-
-def pytest_configure(config):
-    config.pluginmanager.register(LineReporter(), "line_reporter")
-""")
-
-_PLUGIN_PATH = PROJECT_ROOT / "_tmp_reporter_plugin.py"
+class C:
+    GREEN  = "\033[92m" if _ANSI else ""
+    RED    = "\033[91m" if _ANSI else ""
+    YELLOW = "\033[93m" if _ANSI else ""
+    CYAN   = "\033[96m" if _ANSI else ""
+    BOLD   = "\033[1m"  if _ANSI else ""
+    DIM    = "\033[2m"  if _ANSI else ""
+    RESET  = "\033[0m"  if _ANSI else ""
 
 
-def run_pytest(server: str, database: str, database_aux: str, impersonate: str) -> tuple:
-    """Run pytest, parse embedded JSON lines, return list of result dicts."""
-    _PLUGIN_PATH.write_text(_PLUGIN_SOURCE, encoding="utf-8")
-    try:
-        cmd = [
-            sys.executable, "-m", "pytest",
-            str(TESTS_DIR),
-            "-v",
-            "--tb=short",
-            f"--server={server}",
-            f"--database={database}",
-            f"--database-aux={database_aux}",
-            f"--impersonate={impersonate}",
-            "-p", "_tmp_reporter_plugin",
-            "--override-ini=python_files=test_*.py",
-        ]
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
+def _colour(text: str, colour: str) -> str:
+    if not colour:
+        return text
+    return f"{colour}{text}{C.RESET}"
 
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(PROJECT_ROOT),
-        )
-        records: list[dict] = []
+
+# ── data types ───────────────────────────────────────────────
+
+class TestResult:
+    __slots__ = ("name", "classname", "file", "status", "duration", "message", "details")
+
+    def __init__(self, name: str, classname: str, file: str, status: str,
+                 duration: float, message: str = "", details: str = ""):
+        self.name = name
+        self.classname = classname
+        self.file = file
+        self.status = status          # passed | failed | error | skipped
+        self.duration = duration
+        self.message = message
+        self.details = details
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.classname}::{self.name}"
+
+    @property
+    def status_icon(self) -> str:
+        return {"passed": "✓", "failed": "✗", "error": "✗", "skipped": "○"}.get(self.status, "?")
+
+    @property
+    def status_colour(self) -> str:
+        return {"passed": C.GREEN, "failed": C.RED, "error": C.RED, "skipped": C.YELLOW}.get(self.status, "")
+
+
+# ── run pytest ───────────────────────────────────────────────
+
+def run_pytest(server: str, impersonate: str) -> tuple[list[TestResult], float]:
+    """Run pytest with JUnit XML output, parse results."""
+    REPORT_DIR.mkdir(exist_ok=True)
+    xml_path = REPORT_DIR / "junit.xml"
+
+    env = os.environ.copy()
+    env["PYSQLSMCP_TEST_SERVER"] = server
+    env["PYSQLSMCP_TEST_IMPERSONATE"] = impersonate
+    env["PYSQLSMCP_DBG"] = "1"
+
+    print(f"\n{C.BOLD}{'═' * 68}{C.RESET}")
+    print(f"  {C.CYAN}pysqlsmcp Integration Tests{C.RESET}")
+    print(f"  Server:      {C.BOLD}{server}{C.RESET}")
+    print(f"  Impersonate: {C.BOLD}{impersonate}{C.RESET}")
+    print(f"  Time:        {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{C.BOLD}{'═' * 68}{C.RESET}\n")
+
+    cmd = [
+        sys.executable, "-m", "pytest",
+        str(TESTS_DIR),
+        f"--junitxml={xml_path}",
+        "-v",
+        "--tb=short",
+        "-q",
+    ]
+
+    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
+
+    # Print live output
+    if proc.stdout:
         for line in proc.stdout.splitlines():
-            if line.startswith("##PYTEST_RECORD##"):
-                try:
-                    records.append(json.loads(line[len("##PYTEST_RECORD##"):]))
-                except json.JSONDecodeError:
-                    pass
-        return records, proc.stdout, proc.stderr, proc.returncode
-    finally:
-        try:
-            _PLUGIN_PATH.unlink()
-        except OSError:
-            pass
+            if "PASSED" in line:
+                print(f"  {_colour('✓', C.GREEN)} {line}")
+            elif "FAILED" in line:
+                print(f"  {_colour('✗', C.RED)} {line}")
+            elif "ERROR" in line:
+                print(f"  {_colour('✗', C.RED)} {line}")
+            elif "SKIPPED" in line or "SKIP" in line:
+                print(f"  {_colour('○', C.YELLOW)} {line}")
+            elif line.strip():
+                print(f"  {C.DIM}{line}{C.RESET}")
+
+    if proc.stderr:
+        for line in proc.stderr.splitlines():
+            if line.strip():
+                print(f"  {C.DIM}{line}{C.RESET}")
+
+    # Parse JUnit XML
+    results: list[TestResult] = []
+    total_time = 0.0
+
+    if xml_path.exists():
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        total_time = float(root.attrib.get("time", 0))
+
+        for testsuite in root.iter("testsuite"):
+            for tc in testsuite.iter("testcase"):
+                name = tc.attrib.get("name", "")
+                classname = tc.attrib.get("classname", "")
+                file = tc.attrib.get("file", "")
+                duration = float(tc.attrib.get("time", 0))
+
+                failure = tc.find("failure")
+                error = tc.find("error")
+                skipped = tc.find("skipped")
+
+                if failure is not None:
+                    status = "failed"
+                    message = failure.attrib.get("message", "")
+                    details = failure.text or ""
+                elif error is not None:
+                    status = "error"
+                    message = error.attrib.get("message", "")
+                    details = error.text or ""
+                elif skipped is not None:
+                    status = "skipped"
+                    message = skipped.attrib.get("message", "")
+                    details = ""
+                else:
+                    status = "passed"
+                    message = ""
+                    details = ""
+
+                results.append(TestResult(name, classname, file, status, duration, message, details))
+
+    return results, total_time
 
 
-# ---------------------------------------------------------------------------
-# Module / group helpers
-# ---------------------------------------------------------------------------
+# ── report generation ────────────────────────────────────────
 
-_GROUP_MAP = {
-    "test_db_provider":                     "DbProvider",
-    "test_execute_query":                   "executeQuery",
-    "test_explain_query":                   "explainQuery",
-    "test_get_database_permission":         "getDatabasePermission",
-    "test_get_all_database_permission":     "getAllDatabasePermission",
-    "test_required_additional_permission":  "requiredAdditionalPermission",
-    "test_mcp_registration":               "MCP Registration",
+# Description map for every test
+TEST_DESCRIPTIONS: dict[str, str] = {
+    # ── VIEW DEFINITION — main ──
+    "test_impersonation_succeeds": "Імперсонація mcp-server працює (USER_NAME())",
+    "test_sys_tables": "sys.tables — список таблиць з схемами",
+    "test_sys_columns": "sys.columns — колонки таблиці Customers",
+    "test_sys_procedures": "sys.procedures — список збережених процедур",
+    "test_sys_views": "sys.views — список view-ів",
+    "test_sys_schemas": "sys.schemas — наявність dbo, sales, inventory",
+    "test_object_definition_procedure": "OBJECT_DEFINITION для usp_SearchProducts",
+    "test_object_definition_view": "OBJECT_DEFINITION для vw_CustomerOrders",
+    "test_object_definition_function": "OBJECT_DEFINITION для fn_WarehouseTotalQty",
+    "test_sys_foreign_keys": "sys.foreign_keys — зовнішні ключі",
+    "test_sys_indexes": "sys.indexes — індекси таблиці Customers",
+    "test_sys_synonyms": "sys.synonyms — синоніми та їх base_object_name",
+    "test_sys_sql_expression_dependencies": "sys.sql_expression_dependencies — cross-db залежності",
+    # ── VIEW DATABASE STATE ──
+    "test_dm_exec_sessions": "dm_exec_sessions — активні сесії",
+    "test_dm_exec_requests": "dm_exec_requests — активні запити",
+    "test_dm_exec_connections": "dm_exec_connections — з'єднання",
+    "test_dm_db_index_usage_stats": "dm_db_index_usage_stats — статистика індексів",
+    # ── VIEW DATABASE PERFORMANCE STATE ──
+    "test_dm_exec_query_stats": "dm_exec_query_stats — статистика запитів",
+    "test_dm_os_wait_stats": "dm_os_wait_stats — статистика очікувань",
+    # ── VIEW DATABASE SECURITY STATE ──
+    "test_database_permissions": "sys.database_permissions — дозволи для mcp-test-* юзерів",
+    "test_database_role_members": "sys.database_role_members — membership mcp-test-* юзерів",
+    "test_database_principals": "sys.database_principals — ролі role_reader/writer/admin",
+    # ── DENIED — user data main ──
+    "test_denied_select_customers": "DENIED: SELECT з dbo.Customers",
+    "test_denied_select_products": "DENIED: SELECT з inventory.Products",
+    "test_denied_select_orders": "DENIED: SELECT з sales.Orders",
+    "test_denied_select_view": "DENIED: SELECT з view (vw_CustomerOrders або vw_StockSummary)",
+    "test_denied_insert": "DENIED: INSERT в таблицю",
+    "test_denied_update": "DENIED: UPDATE таблиці Customers",
+    "test_denied_delete": "DENIED: DELETE з таблиці",
+    "test_denied_exec_procedure": "DENIED: EXEC збереженої процедури",
+    "test_denied_select_function": "DENIED: виклик скалярної функції",
+    "test_denied_select_audit_log": "DENIED: SELECT з AuditLog",
+    # ── DENIED — user data aux ──
+    "test_denied_select_warehouses": "DENIED: SELECT з dbo.Warehouses",
+    "test_denied_select_warehouse_stock": "DENIED: SELECT з dbo.WarehouseStock",
+    "test_denied_select_shipments": "DENIED: SELECT з dbo.Shipments",
+    # ── explain_query ──
+    "test_simple_select_plan": "SHOWPLAN_XML для простого SELECT * FROM Customers",
+    "test_join_plan": "SHOWPLAN_XML для JOIN (Customers + Orders або WarehouseStock + Warehouses)",
+    "test_cross_schema_join_plan": "SHOWPLAN_XML для cross-schema JOIN (sales + inventory)",
+    "test_cross_db_view_plan": "SHOWPLAN_XML для cross-db view",
+    "test_subquery_plan": "SHOWPLAN_XML для запиту з підзапитом",
+    "test_invalid_table_returns_error": "SHOWPLAN_XML для неіснуючої таблиці — error",
+    "test_invalid_syntax_returns_error": "SHOWPLAN_XML для некоректного SQL — error",
+    "test_warehouse_plan": "SHOWPLAN_XML для SELECT * FROM Warehouses",
+    "test_function_in_query_plan": "SHOWPLAN_XML для запиту з функцією",
+    "test_cross_db_proc_plan": "SHOWPLAN_XML для cross-db процедури",
+    # ── permissions ──
+    "test_all_permissions_no_filter": "Всі permissions без фільтрів",
+    "test_filter_by_user_reader": "Permissions: фільтр user=mcp-test-reader",
+    "test_filter_by_user_writer": "Permissions: фільтр user=mcp-test-writer",
+    "test_filter_by_user_admin": "Permissions: фільтр user=mcp-test-admin",
+    "test_filter_by_object_customers": "Permissions: фільтр object=Customers",
+    "test_filter_by_object_products": "Permissions: фільтр object=Products",
+    "test_filter_by_object_warehouses": "Permissions: фільтр object=Warehouses",
+    "test_filter_by_object_shipments": "Permissions: фільтр object=Shipments",
+    "test_filter_by_object_nonexistent": "Permissions: неіснуючий об'єкт — 0 результатів",
+    "test_combined_filter_admin_customers": "Permissions: комбо user=admin + object=Customers",
+    "test_combined_filter_reader_orders": "Permissions: комбо user=reader + object=Orders",
+    "test_all_permissions": "Всі permissions в mcp_test_aux",
+    "test_list_databases_contains_test_dbs": "list_databases: mcp_test_main + mcp_test_aux присутні",
+    "test_scan_all_with_admin_filter": "getAllDatabasePermission: скан всіх БД з user=admin",
+    "test_scan_all_with_reader_filter": "getAllDatabasePermission: скан всіх БД з user=reader",
+    "test_scan_all_with_nonexistent_user": "getAllDatabasePermission: неіснуючий user — 0 результатів",
+    # ── required permissions — main ──
+    "test_view_aux_warehouse_refs_aux": "Cross-db: vw_AuxWarehouse -> mcp_test_aux.dbo.Warehouses",
+    "test_proc_product_warehouse_stock_refs_aux": "Cross-db: usp_ProductWarehouseStock -> mcp_test_aux",
+    "test_synonym_warehouses": "Synonym: syn_Warehouses -> mcp_test_aux.dbo.Warehouses",
+    "test_local_view_no_cross_deps": "Локальний view vw_CustomerOrders — 0 cross-db залежностей",
+    "test_local_proc_search_products_no_deps": "Локальна процедура usp_SearchProducts — 0 залежностей",
+    "test_cross_schema_proc": "Cross-schema: sales.usp_GetCustomerOrders -> dbo",
+    "test_nonexistent_object": "Неіснуючий об'єкт — 0 рядків, без помилки",
+    # ── required permissions — aux ──
+    "test_view_stock_with_products_refs_main": "Cross-db: vw_StockWithProductNames -> mcp_test_main",
+    "test_proc_stock_report_refs_main": "Cross-db: usp_StockReport -> mcp_test_main.inventory.Products",
+    "test_synonym_products": "Synonym: syn_Products -> mcp_test_main.inventory.Products",
+    "test_local_proc_get_warehouse_info_no_deps": "Локальна usp_GetWarehouseInfo — 0 залежностей",
+    "test_local_view_stock_summary_no_deps": "Локальний vw_StockSummary — 0 залежностей",
+    # ── recursive dependencies ──
+    "test_recursive_from_product_warehouse_stock": "Рекурсивний обхід: usp_ProductWarehouseStock",
+    "test_recursive_from_stock_report": "Рекурсивний обхід: usp_StockReport",
+    "test_recursive_local_proc_zero_deps": "Рекурсивний обхід: локальна процедура — 0 залежностей",
+    "test_recursive_nonexistent_object": "Рекурсивний обхід: неіснуючий об'єкт — 0",
+    # ── security ──
+    "test_revert_keyword_neutralised": "REVERT в запиті — нейтралізація через regex",
+    "test_revert_as_string_literal": "Слово 'revert' як string literal — не ламає запит",
 }
 
 
-def _group_from_nodeid(nodeid: str) -> str:
-    path_part = nodeid.split("::")[0]
-    stem = Path(path_part).stem
-    return _GROUP_MAP.get(stem, stem)
+def generate_report(results: list[TestResult], total_time: float, server: str, impersonate: str, report_path: Path) -> None:
+    """Generate Markdown report."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
-def _test_id_from_nodeid(nodeid: str) -> str:
-    """Extract the class::method or function from nodeid."""
-    parts = nodeid.split("::")
-    if len(parts) >= 3:
-        return f"{parts[1]}::{parts[2]}"
-    elif len(parts) == 2:
-        return parts[1]
-    return nodeid
-
-
-def _extract_docstring(nodeid: str) -> str:
-    """Attempt to extract the test docstring for a human-readable description."""
-    parts = nodeid.split("::")
-    file_path = PROJECT_ROOT / parts[0]
-    if not file_path.exists():
-        return ""
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-    func_name = parts[-1] if len(parts) >= 2 else ""
-    # search for def func_name ... """ docstring """
-    pattern = rf'def\s+{re.escape(func_name)}\s*\(.*?\).*?:\s*\n\s*"""(.*?)"""'
-    m = re.search(pattern, source, re.DOTALL)
-    if m:
-        return m.group(1).strip().split("\n")[0].strip()
-    return func_name.replace("_", " ")
-
-
-# ---------------------------------------------------------------------------
-# Markdown report builder
-# ---------------------------------------------------------------------------
-
-_STATUS_ICON = {"passed": "✅", "failed": "❌", "error": "💥", "skipped": "⏭️"}
-
-
-def _icon(outcome: str) -> str:
-    return _STATUS_ICON.get(outcome, "❓")
-
-
-def build_report(
-    records: list[dict],
-    server: str,
-    database: str,
-    database_aux: str,
-    impersonate: str,
-    started_at: datetime,
-    finished_at: datetime,
-    raw_stdout: str,
-    raw_stderr: str,
-) -> str:
-    total = len(records)
-    passed = sum(1 for r in records if r["outcome"] == "passed")
-    failed = sum(1 for r in records if r["outcome"] in ("failed", "error"))
-    skipped = sum(1 for r in records if r["outcome"] == "skipped")
-    duration_total = sum(r["duration"] for r in records)
-
-    overall = "✅ ALL PASSED" if failed == 0 and total > 0 else f"❌ {failed} FAILED"
+    passed = sum(1 for r in results if r.status == "passed")
+    failed = sum(1 for r in results if r.status == "failed")
+    errors = sum(1 for r in results if r.status == "error")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    total = len(results)
 
     lines: list[str] = []
+    w = lines.append
 
-    # ── Header ────────────────────────────────────────────────────────────
-    lines += [
-        "# pysqlsmcp — Test Report",
-        "",
-        f"**Started:** {started_at.strftime('%Y-%m-%d %H:%M:%S')}  ",
-        f"**Finished:** {finished_at.strftime('%Y-%m-%d %H:%M:%S')}  ",
-        f"**Duration:** {duration_total:.2f}s  ",
-        f"**Server:** `{server}`  ",
-        f"**Database:** `{database}`  ",
-        f"**Database (aux):** `{database_aux}`  ",
-        f"**Impersonate:** `{impersonate}`  ",
-        "",
-        f"## Overall: {overall}",
-        "",
-        f"| Total | Passed | Failed | Skipped |",
-        f"|------:|-------:|-------:|--------:|",
-        f"| {total} | {passed} | {failed} | {skipped} |",
-        "",
-    ]
+    w(f"# pysqlsmcp — Test Report")
+    w(f"")
+    w(f"| Parameter | Value |")
+    w(f"|-----------|-------|")
+    w(f"| Server | `{server}` |")
+    w(f"| Impersonate | `{impersonate}` |")
+    w(f"| Date | {now} |")
+    w(f"| Duration | {total_time:.2f}s |")
+    w(f"| Total | {total} |")
+    w(f"| Passed | {passed} |")
+    w(f"| Failed | {failed} |")
+    w(f"| Errors | {errors} |")
+    w(f"| Skipped | {skipped} |")
+    w(f"")
 
-    # ── Summary table — one row per test ──────────────────────────────────
-    lines += [
-        "## Test Summary",
-        "",
-        "| # | Group | Test | Status | Duration |",
-        "|--:|-------|------|--------|----------|",
-    ]
-    for i, r in enumerate(records, 1):
-        group = _group_from_nodeid(r["nodeid"])
-        test_id = _test_id_from_nodeid(r["nodeid"])
-        desc = _extract_docstring(r["nodeid"])
-        label = desc if desc else test_id
-        icon = _icon(r["outcome"])
-        dur = f"{r['duration']:.3f}s"
-        lines.append(f"| {i} | {group} | {label} | {icon} {r['outcome']} | {dur} |")
+    # Summary table
+    w(f"## Summary")
+    w(f"")
+    w(f"| # | Status | Test | Duration | Description |")
+    w(f"|--:|:------:|------|----------|-------------|")
 
-    lines.append("")
+    for i, r in enumerate(results, 1):
+        icon = {"passed": "✅", "failed": "❌", "error": "❌", "skipped": "⏭️"}.get(r.status, "❓")
+        desc = TEST_DESCRIPTIONS.get(r.name, "")
+        w(f"| {i} | {icon} | `{r.full_name}` | {r.duration:.3f}s | {desc} |")
 
-    # ── Failures detail ───────────────────────────────────────────────────
-    failures = [r for r in records if r["outcome"] in ("failed", "error")]
-    if failures:
-        lines += [
-            "## Failures & Errors",
-            "",
-        ]
-        for r in failures:
-            group = _group_from_nodeid(r["nodeid"])
-            test_id = _test_id_from_nodeid(r["nodeid"])
-            desc = _extract_docstring(r["nodeid"])
-            lines += [
-                f"### {group} / {test_id}",
-                "",
-                f"**Description:** {desc}  " if desc else "",
-                f"**Node:** `{r['nodeid']}`  ",
-                f"**Outcome:** {_icon(r['outcome'])} {r['outcome']}  ",
-                "",
-                "```",
-                (r["longrepr"] or "(no detail)").strip(),
-                "```",
-                "",
-            ]
-    else:
-        lines += ["## Failures & Errors", "", "_No failures — all tests passed._", ""]
+    w(f"")
 
-    # ── Per-test detail ───────────────────────────────────────────────────
-    lines += [
-        "## Test Details",
-        "",
-        "What every test validates and its result.",
-        "",
-    ]
-    current_group = None
-    for r in records:
-        group = _group_from_nodeid(r["nodeid"])
-        if group != current_group:
-            current_group = group
-            lines += [f"### {group}", ""]
+    # Detailed: only non-passed tests + all tests with descriptions
+    w(f"## Detailed Results")
+    w(f"")
 
-        test_id = _test_id_from_nodeid(r["nodeid"])
-        desc = _extract_docstring(r["nodeid"])
-        icon = _icon(r["outcome"])
-        lines += [
-            f"- {icon} **{test_id}** — {desc}  ",
-            f"  Result: {r['outcome']} ({r['duration']:.3f}s)",
-            "",
-        ]
+    # Group by file/class
+    groups: dict[str, list[TestResult]] = {}
+    for r in results:
+        groups.setdefault(r.classname, []).append(r)
 
-    # ── Raw pytest output (collapsed) ─────────────────────────────────────
-    lines += [
-        "<details>",
-        "<summary>Raw pytest output</summary>",
-        "",
-        "```",
-        raw_stdout[:8000] if len(raw_stdout) > 8000 else raw_stdout,
-        "```",
-        "",
-        "</details>",
-        "",
-    ]
+    for classname, class_results in groups.items():
+        w(f"### {classname}")
+        w(f"")
 
-    if raw_stderr.strip():
-        lines += [
-            "<details>",
-            "<summary>stderr</summary>",
-            "",
-            "```",
-            raw_stderr[:4000] if len(raw_stderr) > 4000 else raw_stderr,
-            "```",
-            "",
-            "</details>",
-            "",
-        ]
+        for r in class_results:
+            icon = {"passed": "✅", "failed": "❌", "error": "❌", "skipped": "⏭️"}.get(r.status, "❓")
+            desc = TEST_DESCRIPTIONS.get(r.name, "—")
+            w(f"#### {icon} `{r.name}` ({r.duration:.3f}s)")
+            w(f"")
+            w(f"**Description:** {desc}")
+            w(f"")
 
-    return "\n".join(lines)
+            if r.status in ("failed", "error"):
+                w(f"**Error:** {r.message}")
+                w(f"")
+                if r.details:
+                    w(f"<details>")
+                    w(f"<summary>Full traceback</summary>")
+                    w(f"")
+                    w(f"```")
+                    w(r.details.rstrip())
+                    w(f"```")
+                    w(f"</details>")
+                    w(f"")
+
+        w(f"")
+
+    report_path.parent.mkdir(exist_ok=True)
+    report_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def print_summary(results: list[TestResult], total_time: float) -> None:
+    """Print coloured summary to terminal."""
+    passed = sum(1 for r in results if r.status == "passed")
+    failed = sum(1 for r in results if r.status == "failed")
+    errors = sum(1 for r in results if r.status == "error")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    total = len(results)
 
-def main() -> None:
-    server, database, database_aux, impersonate = get_params()
+    print(f"\n{C.BOLD}{'═' * 68}{C.RESET}")
+    print(f"  {C.BOLD}RESULTS{C.RESET}")
+    print(f"{'═' * 68}")
+    print(f"  Total:   {total}")
+    print(f"  Passed:  {_colour(str(passed), C.GREEN)}")
+    if failed:
+        print(f"  Failed:  {_colour(str(failed), C.RED)}")
+    if errors:
+        print(f"  Errors:  {_colour(str(errors), C.RED)}")
+    if skipped:
+        print(f"  Skipped: {_colour(str(skipped), C.YELLOW)}")
+    print(f"  Time:    {total_time:.2f}s")
+    print(f"{'═' * 68}")
 
-    print(f"\npysqlsmcp test runner")
-    print(f"  Server      : {server}")
-    print(f"  Database    : {database}")
-    print(f"  Database aux: {database_aux}")
-    print(f"  Impersonate : {impersonate}")
-    print(f"  Tests dir   : {TESTS_DIR}\n")
+    if failed or errors:
+        print(f"\n  {C.RED}{C.BOLD}FAILED TESTS:{C.RESET}")
+        for r in results:
+            if r.status in ("failed", "error"):
+                print(f"    {_colour('✗', C.RED)} {r.full_name}")
+                if r.message:
+                    print(f"      {C.DIM}{r.message[:120]}{C.RESET}")
 
-    started_at = datetime.now()
-    print("Running pytest …\n")
-    records, stdout, stderr, returncode = run_pytest(server, database, database_aux, impersonate)
-    finished_at = datetime.now()
+    print()
 
-    if not records:
-        print("WARNING: No test records collected. Check that pytest ran correctly.")
-        print(stdout[-2000:] if stdout else "(no stdout)")
-        if stderr:
-            print(stderr[-1000:])
 
-    report_md = build_report(
-        records, server, database, database_aux, impersonate,
-        started_at, finished_at, stdout, stderr
-    )
+# ── main ─────────────────────────────────────────────────────
 
-    timestamp = started_at.strftime("%Y%m%d%H%M")
-    report_path = PROJECT_ROOT / f"test_{timestamp}.md"
-    report_path.write_text(report_md, encoding="utf-8")
+def _resolve_param(cli_value: str | None, env_var: str, prompt_label: str,
+                   example: str, default: str | None = None) -> str:
+    """Resolve a parameter: CLI arg > env var > interactive prompt."""
+    if cli_value:
+        return cli_value
+    env = os.environ.get(env_var, "").strip()
+    if env:
+        return env
+    # Interactive prompt
+    hint = f" [{default}]" if default else ""
+    value = input(f"  {prompt_label} (e.g. {example}){hint}: ").strip()
+    if not value:
+        if default:
+            return default
+        print(f"  {_colour(f'Aborted — {prompt_label} not provided.', C.RED)}")
+        sys.exit(1)
+    return value
 
-    total = len(records)
-    passed = sum(1 for r in records if r["outcome"] == "passed")
-    failed = sum(1 for r in records if r["outcome"] in ("failed", "error"))
 
-    print(f"\nResults: {passed}/{total} passed, {failed} failed")
-    print(f"Report : {report_path}")
+def main():
+    parser = argparse.ArgumentParser(description="pysqlsmcp test orchestrator")
+    parser.add_argument("--server", default=None,
+                        help="SQL Server instance (or set PYSQLSMCP_TEST_SERVER env var)")
+    parser.add_argument("--impersonate", default=None,
+                        help="Login to impersonate (default: mcp-server, or PYSQLSMCP_TEST_IMPERSONATE env var)")
+    parser.add_argument("--report", default=str(REPORT_DIR / "test-report.md"),
+                        help="Path to output report (default: reports/test-report.md)")
+    args = parser.parse_args()
 
-    sys.exit(0 if failed == 0 else 1)
+    server = _resolve_param(args.server, "PYSQLSMCP_TEST_SERVER",
+                            "SQL Server instance", "localhost, .\\SQLEXPRESS")
+    impersonate = _resolve_param(args.impersonate, "PYSQLSMCP_TEST_IMPERSONATE",
+                                 "Impersonate login", "mcp-server", default="mcp-server")
+    results, total_time = run_pytest(server, impersonate)
+
+    print_summary(results, total_time)
+
+    report_path = Path(args.report)
+    generate_report(results, total_time, server, impersonate, report_path)
+    print(f"  Report saved to: {report_path}\n")
+
+    # Exit code
+    failed = sum(1 for r in results if r.status in ("failed", "error"))
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

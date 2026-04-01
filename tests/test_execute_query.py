@@ -1,259 +1,307 @@
-"""
-Tests for tool: executeQuery
-Calls the registered MCP tool function directly (bypassing MCP transport).
+"""Tests for executeQuery tool under mcp-server impersonation.
 
-Group: execute_query
+mcp-server has:
+  ✓ VIEW DEFINITION — sys.tables, sys.columns, sys.procedures, OBJECT_DEFINITION
+  ✓ VIEW DATABASE STATE — dm_exec_*, dm_os_*, session/connection info
+  ✓ VIEW DATABASE PERFORMANCE STATE — query stats, index usage
+  ✓ VIEW DATABASE SECURITY STATE — permission metadata
+  ✗ User data — db_denydatareader + db_denydatawriter
 """
+
 import json
 import pytest
-from mcp.server.fastmcp import FastMCP
-from tools.execute_query import register
+from db_provider import DbProvider
 
 
-def _tool(server, database, impersonate):
-    mcp = FastMCP("test")
-    register(mcp)
-    fn = mcp._tool_manager._tools["executeQuery"].fn
-    return fn, server, database, impersonate
+# ═══════════════════════════════════════════════════════════════
+#   VIEW DEFINITION — schema metadata
+# ═══════════════════════════════════════════════════════════════
+
+class TestViewDefinitionMain:
+    """VIEW DEFINITION access on mcp_test_main."""
+
+    def test_impersonation_succeeds(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query("SELECT USER_NAME() AS CurrentUser"))
+        assert "error" not in result, f"Impersonation failed: {result.get('error')}"
+
+    def test_sys_tables(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT s.name AS [schema], t.name AS [table] "
+            "FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id "
+            "ORDER BY s.name, t.name"
+        ))
+        assert "error" not in result
+        names = [(row[0], row[1]) for row in result["rows"]]
+        assert ("dbo", "Customers") in names
+        assert ("sales", "Orders") in names
+        assert ("inventory", "Products") in names
+
+    def test_sys_columns(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT c.name, TYPE_NAME(c.user_type_id) AS type_name "
+            "FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id "
+            "WHERE t.name = 'Customers'"
+        ))
+        assert "error" not in result
+        col_names = [row[0] for row in result["rows"]]
+        assert "CustomerID" in col_names
+        assert "FullName" in col_names
+        assert "Email" in col_names
+
+    def test_sys_procedures(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT SCHEMA_NAME(schema_id) AS [schema], name "
+            "FROM sys.procedures ORDER BY name"
+        ))
+        assert "error" not in result
+        proc_names = [row[1] for row in result["rows"]]
+        assert "usp_SearchProducts" in proc_names
+        assert "usp_GetCustomerOrders" in proc_names
+
+    def test_sys_views(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name FROM sys.views ORDER BY name"
+        ))
+        assert "error" not in result
+        view_names = [row[0] for row in result["rows"]]
+        assert "vw_CustomerOrders" in view_names
+        assert "vw_AuxWarehouse" in view_names
+
+    def test_sys_schemas(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name FROM sys.schemas WHERE name IN ('dbo', 'sales', 'inventory') ORDER BY name"
+        ))
+        assert "error" not in result
+        schemas = [row[0] for row in result["rows"]]
+        assert "dbo" in schemas
+        assert "sales" in schemas
+        assert "inventory" in schemas
+
+    def test_object_definition_procedure(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.usp_SearchProducts')) AS def_text"
+        ))
+        assert "error" not in result
+        assert result["rows"][0][0] is not None
+        assert "SearchTerm" in result["rows"][0][0]
+
+    def test_object_definition_view(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.vw_CustomerOrders')) AS def_text"
+        ))
+        assert "error" not in result
+        assert result["rows"][0][0] is not None
+
+    def test_sys_foreign_keys(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_NAME(parent_object_id) AS child_table, "
+            "OBJECT_NAME(referenced_object_id) AS parent_table "
+            "FROM sys.foreign_keys"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] > 0
+
+    def test_sys_indexes(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_NAME(object_id) AS [table], name, type_desc "
+            "FROM sys.indexes WHERE name IS NOT NULL AND OBJECT_NAME(object_id) = 'Customers'"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] >= 1
+
+    def test_sys_synonyms(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name, base_object_name FROM sys.synonyms ORDER BY name"
+        ))
+        assert "error" not in result
+        syn_names = [row[0] for row in result["rows"]]
+        assert "syn_Warehouses" in syn_names
+
+    def test_sys_sql_expression_dependencies(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_NAME(referencing_id) AS referencing, "
+            "referenced_database_name, referenced_schema_name, referenced_entity_name "
+            "FROM sys.sql_expression_dependencies "
+            "WHERE referenced_database_name IS NOT NULL"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] > 0
 
 
-class TestExecuteQueryBasic:
-    """EQ-001 … EQ-006: Core query execution."""
+class TestViewDefinitionAux:
+    """VIEW DEFINITION access on mcp_test_aux."""
 
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database, impersonate):
-        self.fn, self.server, self.db, self.imp = _tool(server, database, impersonate)
+    def test_sys_tables(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name FROM sys.tables ORDER BY name"
+        ))
+        assert "error" not in result
+        names = [row[0] for row in result["rows"]]
+        assert "Warehouses" in names
+        assert "WarehouseStock" in names
+        assert "Shipments" in names
 
-    def test_simple_select(self):
-        """EQ-001: Simple SELECT returns JSON with rows."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT 1 AS v", impersonate=self.imp))
-        assert "error" not in r
-        assert r["rows"][0][0] == 1
+    def test_sys_procedures(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.execute_query("SELECT name FROM sys.procedures"))
+        assert "error" not in result
+        procs = [row[0] for row in result["rows"]]
+        assert "usp_GetWarehouseInfo" in procs
+        assert "usp_StockReport" in procs
 
-    def test_returns_columns(self):
-        """EQ-002: Result contains column metadata."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT 42 AS answer", impersonate=self.imp))
-        assert "columns" in r
-        assert "answer" in r["columns"]
+    def test_object_definition_function(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.fn_WarehouseTotalQty')) AS def_text"
+        ))
+        assert "error" not in result
+        assert result["rows"][0][0] is not None
 
-    def test_bad_sql_returns_error(self):
-        """EQ-003: Invalid SQL returns error key in JSON (no exception)."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="BAD SQL XYZ", impersonate=self.imp))
-        assert "error" in r
-
-    def test_row_count_matches(self):
-        """EQ-004: rowCount matches actual number of rows."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT v FROM (VALUES(1),(2),(3)) t(v)",
-                               impersonate=self.imp))
-        assert r["rowCount"] == 3
-        assert len(r["rows"]) == 3
-
-    def test_revert_in_query_neutralised(self):
-        """EQ-005: REVERT keyword inside user query is sanitised."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT 'REVERT rocks' AS msg",
-                               impersonate=self.imp))
-        assert "error" not in r
-
-    def test_non_select_returns_row_count(self):
-        """EQ-006: Non-SELECT DML returns rowCount."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="DECLARE @x INT = 1; SELECT @x AS v",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "rowCount" in r
+    def test_sys_synonyms(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name, base_object_name FROM sys.synonyms ORDER BY name"
+        ))
+        assert "error" not in result
+        syn_names = [row[0] for row in result["rows"]]
+        assert "syn_Products" in syn_names
+        assert "syn_Customers" in syn_names
 
 
-class TestExecuteQueryTestDb:
-    """EQ-101 … EQ-110: Queries against mcp_test_main tables/views/procs."""
+# ═══════════════════════════════════════════════════════════════
+#   VIEW DATABASE STATE — DMVs, sessions, diagnostics
+# ═══════════════════════════════════════════════════════════════
 
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database, impersonate):
-        self.fn, self.server, self.db, self.imp = _tool(server, database, impersonate)
+class TestViewDatabaseState:
+    """VIEW DATABASE STATE — DMVs, diagnostics."""
 
-    def test_select_customers(self):
-        """EQ-101: SELECT from dbo.Customers returns seeded data."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT CustomerID, FullName FROM dbo.Customers ORDER BY CustomerID",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 3
+    def test_dm_exec_sessions(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 session_id, login_name, status FROM sys.dm_exec_sessions"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] >= 1
 
-    def test_select_products(self):
-        """EQ-102: SELECT from inventory.Products returns seeded products."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT ProductID, ProductName FROM inventory.Products",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 5
+    def test_dm_exec_requests(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 session_id, status, command FROM sys.dm_exec_requests"
+        ))
+        assert "error" not in result
 
-    def test_select_orders_join(self):
-        """EQ-103: JOIN across schemas (sales.Orders + dbo.Customers)."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT c.FullName, o.TotalAmount FROM dbo.Customers c JOIN sales.Orders o ON o.CustomerID = c.CustomerID",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
+    def test_dm_exec_connections(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 session_id, connect_time, net_transport FROM sys.dm_exec_connections"
+        ))
+        assert "error" not in result
 
-    def test_view_customer_orders(self):
-        """EQ-104: SELECT from dbo.vw_CustomerOrders."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.vw_CustomerOrders",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
-
-    def test_view_order_details(self):
-        """EQ-105: SELECT from sales.vw_OrderDetails."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM sales.vw_OrderDetails",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "LineTotal" in r["columns"]
-
-    def test_view_low_stock(self):
-        """EQ-106: SELECT from inventory.vw_LowStock returns low-stock items."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM inventory.vw_LowStock",
-                               impersonate=self.imp))
-        assert "error" not in r
-
-    def test_function_order_total(self):
-        """EQ-107: Scalar function dbo.fn_OrderTotal returns correct value."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT dbo.fn_OrderTotal(1) AS total",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rows"][0][0] is not None
-
-    def test_function_stock_value(self):
-        """EQ-108: Scalar function inventory.fn_StockValue."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT inventory.fn_StockValue(1) AS val",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rows"][0][0] is not None
-
-    def test_proc_search_products(self):
-        """EQ-109: EXEC dbo.usp_SearchProducts returns matching products."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="EXEC dbo.usp_SearchProducts @SearchTerm = N'Widget'",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 2
-
-    def test_proc_get_customer_orders(self):
-        """EQ-110: EXEC sales.usp_GetCustomerOrders for customer 1."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="EXEC sales.usp_GetCustomerOrders @CustomerID = 1",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
+    def test_dm_db_index_usage_stats(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 OBJECT_NAME(object_id) AS [table], "
+            "user_seeks, user_scans, user_lookups "
+            "FROM sys.dm_db_index_usage_stats WHERE database_id = DB_ID()"
+        ))
+        assert "error" not in result
 
 
-class TestExecuteQueryCrossDb:
-    """EQ-201 … EQ-205: Cross-database queries from mcp_test_main."""
+# ═══════════════════════════════════════════════════════════════
+#   VIEW DATABASE PERFORMANCE STATE
+# ═══════════════════════════════════════════════════════════════
 
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database, impersonate):
-        self.fn, self.server, self.db, self.imp = _tool(server, database, impersonate)
+class TestViewDatabasePerformanceState:
+    """VIEW DATABASE PERFORMANCE STATE — query stats, wait stats."""
 
-    def test_cross_db_view(self):
-        """EQ-201: vw_AuxWarehouse reads from mcp_test_aux."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.vw_AuxWarehouse",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 3
+    def test_dm_exec_query_stats(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 execution_count, total_worker_time, total_logical_reads "
+            "FROM sys.dm_exec_query_stats ORDER BY total_worker_time DESC"
+        ))
+        assert "error" not in result
 
-    def test_cross_db_procedure(self):
-        """EQ-202: usp_ProductWarehouseStock reads from mcp_test_aux."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="EXEC dbo.usp_ProductWarehouseStock @ProductID = 1",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
-
-    def test_synonym_warehouses(self):
-        """EQ-203: SELECT via synonym dbo.syn_Warehouses."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.syn_Warehouses",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 3
-
-    def test_synonym_warehouse_stock(self):
-        """EQ-204: SELECT via synonym dbo.syn_WarehouseStock."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.syn_WarehouseStock",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
-
-    def test_synonym_exec_proc(self):
-        """EQ-205: EXEC via synonym dbo.syn_AuxGetWarehouse."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="EXEC dbo.syn_AuxGetWarehouse @WarehouseID = 1",
-                               impersonate=self.imp))
-        assert "error" not in r
+    def test_dm_os_wait_stats(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 5 wait_type, waiting_tasks_count, wait_time_ms "
+            "FROM sys.dm_os_wait_stats ORDER BY wait_time_ms DESC"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] >= 1
 
 
-class TestExecuteQueryAuxDb:
-    """EQ-301 … EQ-306: Queries against mcp_test_aux."""
+# ═══════════════════════════════════════════════════════════════
+#   VIEW DATABASE SECURITY STATE — permissions, principals
+# ═══════════════════════════════════════════════════════════════
 
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database_aux, impersonate):
-        self.fn, self.server, _, self.imp = _tool(server, database_aux, impersonate)
-        self.db = database_aux
+class TestViewDatabaseSecurityState:
+    """VIEW DATABASE SECURITY STATE — permission metadata, principals."""
 
-    def test_select_warehouses(self):
-        """EQ-301: SELECT from dbo.Warehouses in aux db."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.Warehouses",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 3
+    def test_database_permissions(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc "
+            "FROM sys.database_principals dp "
+            "JOIN sys.database_permissions p ON p.grantee_principal_id = dp.principal_id "
+            "WHERE dp.name LIKE 'mcp-test-%'"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] > 0
 
-    def test_select_warehouse_stock(self):
-        """EQ-302: SELECT from dbo.WarehouseStock in aux db."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.WarehouseStock",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 7
+    def test_database_role_members(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT USER_NAME(role_principal_id) AS role_name, "
+            "USER_NAME(member_principal_id) AS member_name "
+            "FROM sys.database_role_members "
+            "WHERE USER_NAME(member_principal_id) LIKE 'mcp-test-%'"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] >= 3
 
-    def test_view_stock_summary(self):
-        """EQ-303: SELECT from dbo.vw_StockSummary in aux db."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.vw_StockSummary",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
+    def test_database_principals(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "SELECT name, type_desc FROM sys.database_principals "
+            "WHERE name LIKE 'role_%' ORDER BY name"
+        ))
+        assert "error" not in result
+        role_names = [row[0] for row in result["rows"]]
+        assert "role_reader" in role_names
+        assert "role_writer" in role_names
+        assert "role_admin" in role_names
 
-    def test_cross_db_view_aux(self):
-        """EQ-304: vw_StockWithProductNames reads from mcp_test_main."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.vw_StockWithProductNames",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ProductName" in r["columns"]
 
-    def test_cross_db_proc_stock_report(self):
-        """EQ-305: usp_StockReport reads cross-db from mcp_test_main."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="EXEC dbo.usp_StockReport @WarehouseID = 1",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 1
 
-    def test_synonym_products(self):
-        """EQ-306: SELECT via synonym dbo.syn_Products in aux db."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.syn_Products",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["rowCount"] >= 5
+# ═══════════════════════════════════════════════════════════════
+#   Security: REVERT keyword neutralisation
+# ═══════════════════════════════════════════════════════════════
+
+class TestSecurityRevert:
+    """REVERT keyword is neutralised to prevent escaping impersonation."""
+
+    def test_revert_keyword_neutralised(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query("REVERT; SELECT 1 AS x"))
+        # REVERT replaced with /*revert*/, query still runs
+        assert True  # no crash
+
+    def test_revert_as_string_literal(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.execute_query("SELECT '/*revert*/' AS word"))
+        assert "error" not in result

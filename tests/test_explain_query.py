@@ -1,103 +1,96 @@
-"""
-Tests for tool: explainQuery
-Returns XML execution plan without running the query.
+"""Tests for explainQuery tool under mcp-server impersonation.
 
-Group: explain_query
+mcp-server has VIEW DATABASE STATE → can use SET SHOWPLAN_XML ON
+to generate execution plans without actually accessing user data.
 """
+
 import json
 import pytest
-from mcp.server.fastmcp import FastMCP
-from tools.explain_query import register
+from db_provider import DbProvider
 
 
-def _tool(server, database, impersonate):
-    mcp = FastMCP("test")
-    register(mcp)
-    fn = mcp._tool_manager._tools["explainQuery"].fn
-    return fn, server, database, impersonate
+class TestExplainQueryMain:
+    """Execution plans on mcp_test_main via mcp-server."""
+
+    def test_simple_select_plan(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query("SELECT * FROM dbo.Customers"))
+        assert "error" not in result, f"Unexpected error: {result.get('error')}"
+        assert result.get("plan") is not None
+        assert "ShowPlanXML" in result["plan"]
+
+    def test_join_plan(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query(
+            "SELECT c.FullName, o.TotalAmount "
+            "FROM dbo.Customers c JOIN sales.Orders o ON o.CustomerID = c.CustomerID"
+        ))
+        assert "error" not in result
+        assert "ShowPlanXML" in result["plan"]
+
+    def test_cross_schema_join_plan(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query(
+            "SELECT oi.ItemID, p.ProductName "
+            "FROM sales.OrderItems oi "
+            "JOIN inventory.Products p ON p.ProductID = oi.ProductID"
+        ))
+        assert "error" not in result
+        assert "ShowPlanXML" in result["plan"]
+
+    def test_cross_db_view_plan(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query("SELECT * FROM dbo.vw_AuxWarehouse"))
+        assert "error" not in result
+        assert result.get("plan") is not None
+
+    def test_subquery_plan(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query(
+            "SELECT c.FullName, (SELECT COUNT(*) FROM sales.Orders o WHERE o.CustomerID = c.CustomerID) AS cnt "
+            "FROM dbo.Customers c"
+        ))
+        assert "error" not in result
+        assert "ShowPlanXML" in result["plan"]
+
+    def test_invalid_table_returns_error(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query("SELECT * FROM dbo.NonExistentTable"))
+        assert "error" in result
+
+    def test_invalid_syntax_returns_error(self, server, main_db, impersonate):
+        db = DbProvider(server, main_db, impersonate)
+        result = json.loads(db.explain_query("SELEC * FORM dbo.Customers"))
+        assert "error" in result
 
 
-class TestExplainQueryBasic:
-    """XQ-001 … XQ-004: Core explain functionality."""
+class TestExplainQueryAux:
+    """Execution plans on mcp_test_aux via mcp-server."""
 
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database, impersonate):
-        self.fn, self.server, self.db, self.imp = _tool(server, database, impersonate)
+    def test_warehouse_plan(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.explain_query("SELECT * FROM dbo.Warehouses"))
+        assert "error" not in result
+        assert "ShowPlanXML" in result["plan"]
 
-    def test_returns_plan(self):
-        """XQ-001: Simple SELECT returns an XML plan."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT 1 AS v", impersonate=self.imp))
-        assert "error" not in r
-        assert r["plan"] is not None
-        assert "ShowPlanXML" in r["plan"]
+    def test_join_plan(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.explain_query(
+            "SELECT w.WarehouseName, ws.ProductID, ws.Quantity "
+            "FROM dbo.WarehouseStock ws "
+            "JOIN dbo.Warehouses w ON w.WarehouseID = ws.WarehouseID"
+        ))
+        assert "error" not in result
+        assert "ShowPlanXML" in result["plan"]
 
-    def test_plan_contains_query_reference(self):
-        """XQ-002: Plan XML references the query statement."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT CustomerID FROM dbo.Customers",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "Customers" in r["plan"]
+    def test_function_in_query_plan(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.explain_query("SELECT dbo.fn_WarehouseTotalQty(1) AS Total"))
+        assert "error" not in result
+        assert result.get("plan") is not None
 
-    def test_bad_sql_returns_error(self):
-        """XQ-003: Invalid SQL returns error key."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="BAD SQL XYZ", impersonate=self.imp))
-        assert "error" in r
-
-    def test_plan_for_join(self):
-        """XQ-004: JOIN query produces a valid plan."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT c.FullName, o.TotalAmount FROM dbo.Customers c JOIN sales.Orders o ON o.CustomerID = c.CustomerID",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ShowPlanXML" in r["plan"]
-
-
-class TestExplainQueryTestDb:
-    """XQ-101 … XQ-105: Explain plans for test database objects."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self, server, database, impersonate):
-        self.fn, self.server, self.db, self.imp = _tool(server, database, impersonate)
-
-    def test_explain_view(self):
-        """XQ-101: Explain plan for view query."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT * FROM dbo.vw_CustomerOrders",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ShowPlanXML" in r["plan"]
-
-    def test_explain_cross_schema(self):
-        """XQ-102: Explain plan for cross-schema join."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT oi.*, p.ProductName FROM sales.OrderItems oi JOIN inventory.Products p ON p.ProductID = oi.ProductID",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ShowPlanXML" in r["plan"]
-
-    def test_explain_function_call(self):
-        """XQ-103: Explain plan for query calling scalar function."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT dbo.fn_OrderTotal(1) AS total",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert r["plan"] is not None
-
-    def test_explain_procedure_via_select(self):
-        """XQ-104: Explain plan for a SELECT that references multiple schemas."""
-        r = json.loads(self.fn(server=self.server, database=self.db,
-                               query="SELECT p.ProductName, p.Price, p.StockQty FROM inventory.Products p WHERE p.StockQty < 20",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ShowPlanXML" in r["plan"]
-
-    def test_explain_aux_db(self):
-        """XQ-105: Explain plan against aux database."""
-        r = json.loads(self.fn(server=self.server, database="mcp_test_aux",
-                               query="SELECT * FROM dbo.vw_StockSummary",
-                               impersonate=self.imp))
-        assert "error" not in r
-        assert "ShowPlanXML" in r["plan"]
+    def test_cross_db_view_plan(self, server, aux_db, impersonate):
+        db = DbProvider(server, aux_db, impersonate)
+        result = json.loads(db.explain_query("SELECT * FROM dbo.vw_StockWithProductNames"))
+        assert "error" not in result
+        assert result.get("plan") is not None

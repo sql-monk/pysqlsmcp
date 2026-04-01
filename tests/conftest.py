@@ -1,64 +1,47 @@
+"""Shared fixtures for pysqlsmcp integration tests.
+
+Permission model
+────────────────
+Connection: Windows auth (trusted).
+Impersonation: EXECUTE AS LOGIN = 'mcp-server' inside each session.
+
+mcp-server:
+  Server roles: ServerStateReader, PerformanceStateReader,
+                DefinitionReader, SecurityDefinitionReader, DatabaseConnector.
+  Per-database: VIEW DEFINITION, VIEW DATABASE STATE,
+                VIEW DATABASE PERFORMANCE STATE, VIEW DATABASE SECURITY STATE.
+                db_denydatareader + db_denydatawriter → NO user data access.
+
+All MCP tools operate under mcp-server. The tests verify:
+  ✓ metadata access (sys.*, OBJECT_DEFINITION, SHOWPLAN_XML, permissions)
+  ✗ user data access (SELECT/INSERT/UPDATE/DELETE on user tables/views)
 """
-Shared fixtures and helpers for integration tests.
-Connection parameters are injected via pytest fixtures resolved from
-the CLI options registered here.
-"""
-import json
-import sys
+
 import os
+import sys
+from pathlib import Path
+
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-
-def pytest_addoption(parser):
-    parser.addoption("--server",       required=True,  help="SQL Server host/instance")
-    parser.addoption("--database",     required=True,  help="Main database (mcp_test_main)")
-    parser.addoption("--database-aux", required=True,  help="Aux database (mcp_test_aux)")
-    parser.addoption("--impersonate",  required=True,  help="Login to impersonate")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 @pytest.fixture(scope="session")
-def server(request):
-    return request.config.getoption("--server")
+def server():
+    return os.environ.get("PYSQLSMCP_TEST_SERVER", "localhost")
 
 
 @pytest.fixture(scope="session")
-def database(request):
-    return request.config.getoption("--database")
+def impersonate():
+    """MCP login — metadata only, no user data access."""
+    return os.environ.get("PYSQLSMCP_TEST_IMPERSONATE", "mcp-server")
 
 
 @pytest.fixture(scope="session")
-def database_aux(request):
-    return request.config.getoption("--database-aux")
+def main_db():
+    return "mcp_test_main"
 
 
 @pytest.fixture(scope="session")
-def impersonate(request):
-    return request.config.getoption("--impersonate")
-
-
-@pytest.fixture(scope="session")
-def db(server, database, impersonate):
-    """DbProvider connected to the main test database."""
-    from db_provider import DbProvider
-    return DbProvider(server, database, impersonate)
-
-
-@pytest.fixture(scope="session")
-def db_aux(server, database_aux, impersonate):
-    """DbProvider connected to the aux test database."""
-    from db_provider import DbProvider
-    return DbProvider(server, database_aux, impersonate)
-
-
-@pytest.fixture(scope="session")
-def master_db(server, impersonate):
-    """DbProvider connected to master."""
-    from db_provider import DbProvider
-    return DbProvider(server, "master", impersonate)
-
-
-def parse_result(json_str: str) -> dict:
-    """Parse JSON result string."""
-    return json.loads(json_str)
+def aux_db():
+    return "mcp_test_aux"

@@ -3,10 +3,12 @@ __pycache__/
 .pytest_cache/
 .vscode/
 
+reports/
+
 *.pyc
 *.pyo
 *.pem
+*.log
 
 claude.code-workspace
 .gitignore
-

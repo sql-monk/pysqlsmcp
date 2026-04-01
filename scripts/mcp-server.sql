@@ -14,3 +14,16 @@ ALTER SERVER ROLE [##MS_DefinitionReader##]             ADD MEMBER [mcp-server];
 ALTER SERVER ROLE [##MS_SecurityDefinitionReader##]     ADD MEMBER [mcp-server];
 ALTER SERVER ROLE [##MS_DatabaseConnector##]            ADD MEMBER [mcp-server];
 GO
+
+DECLARE @sql NVARCHAR(max) = '';
+SELECT @sql +=	REPLACE('
+	USE [@@db];
+	IF USER_ID(''mcp-server'') IS NULL CREATE USER [mcp-server] FROM LOGIN [mcp-server];
+	IF USER_ID(''db_mcpserver'') IS NULL CREATE ROLE db_mcpserver;
+	ALTER ROLE db_mcpserver ADD MEMBER [mcp-server];
+	GRANT VIEW DEFINITION, SHOWPLAN TO db_mcpserver;
+		GRANT SELECT ON SCHEMA::sys TO db_mcpserver;', '@@db', name)
+FROM sys.databases
+WHERE state_desc = 'ONLINE';
+
+EXEC(@sql);
