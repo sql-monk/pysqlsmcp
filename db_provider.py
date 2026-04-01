@@ -22,12 +22,12 @@ ORDER BY name
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, mcplevel: int = 0, timeout: int = 90):
+    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, impersonate: str = "", timeout: int = 90):
         self._server = server
         self._database = database
         self._username = username
         self._password = password
-        self._mcplevel = mcplevel
+        self._impersonate = impersonate
         self._timeout = timeout
 
     def _connection_string(self) -> str:
@@ -43,26 +43,15 @@ class DbProvider:
         )
 
     def _impersonate_sql(self) -> str:
-        if self._mcplevel == 1:
-            safe_db = self._database.replace("'", "''")
-            expected = f"mcp-{safe_db}"
-            return (
-                f"EXECUTE AS USER = N'{expected}';\n"
-                f"DECLARE @__mcp_check NVARCHAR(256) = USER_NAME();\n"
-                f"IF @__mcp_check <> N'{expected}'\n"
-                f"BEGIN\n"
-                f"    REVERT;\n"
-                f"    RAISERROR('MCP impersonation failed: USER_NAME()=[%s]', 16, 1, @__mcp_check);\n"
-                f"END\n"
-            )
+        name = self._impersonate.replace("'", "''")
         return (
-            "EXECUTE AS LOGIN = N'mcp-server';\n"
-            "DECLARE @__mcp_check NVARCHAR(256) = SYSTEM_USER;\n"
-            "IF @__mcp_check <> N'mcp-server'\n"
-            "BEGIN\n"
-            "    REVERT;\n"
-            "    RAISERROR('MCP impersonation failed: SYSTEM_USER=[%s]', 16, 1, @__mcp_check);\n"
-            "END\n"
+            f"EXECUTE AS USER = N'{name}';\n"
+            f"DECLARE @__mcp_check NVARCHAR(256) = USER_NAME();\n"
+            f"IF @__mcp_check <> N'{name}'\n"
+            f"BEGIN\n"
+            f"    REVERT;\n"
+            f"    RAISERROR('MCP impersonation failed: USER_NAME()=[%s]', 16, 1, @__mcp_check);\n"
+            f"END\n"
         )
 
     def execute_query(self, query: str, params: tuple | None = None) -> str:

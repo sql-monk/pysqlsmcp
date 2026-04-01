@@ -1,6 +1,6 @@
 """
 pysqlsmcp installer
-  - creates SQL Server logins / users via scripts/mcp-server.sql or scripts/mcp-database.sql
+  - creates SQL Server users for impersonation via scripts/mcp-database.sql
   - registers the MCP server in agent config files (VS Code, Claude Desktop, etc.)
 """
 
@@ -81,28 +81,20 @@ def setup_sql_users() -> None:
 
     server = input("  SQL Server instance (e.g. localhost): ").strip()
     if not server:
-        print("  Skipped — no server provided.")
+        print("  - Skipped — no server provided.")
         return
 
-    # Server-level login
-    if _ask_yes_no("  Create server-level login (mcp-server)?"):
-        password = _generate_password()
-        _run_sql_script(server, SCRIPTS / "mcp-server.sql",
-                        {"{{PASSWORD}}": password}, database="master")
-        print("  ✓ Server-level login 'mcp-server' created (password auto-generated, not stored).")
-
-    # Database-level logins
-    while _ask_yes_no("  Create database-level user for a specific database?"):
+    while _ask_yes_no("  Create MCP user for a database?"):
         db_name = input("    Database name: ").strip()
         if not db_name:
-            print("    Skipped — no name provided.")
+            print("    - Skipped — no name provided.")
             continue
         password = _generate_password()
         _run_sql_script(server, SCRIPTS / "mcp-database.sql", {
             "{{DATABASE}}": db_name,
             "{{PASSWORD}}": password,
         }, database=db_name)
-        print(f"  ✓ Database-level user 'mcp-{db_name}' created (password auto-generated, not stored).")
+        print(f"+ User 'mcp-{db_name}' created (password auto-generated, not stored).")
 
 
 # ── 2. agent integration ────────────────────────────────────
@@ -193,11 +185,11 @@ def setup_agent_integration() -> None:
             elif config_path.name == "claude_desktop_config.json":
                 _patch_claude_config(config_path)
             else:
-                print(f"  ⚠ Unknown config format: {config_path.name} — skipped.")
+                print(f"! Unknown config format: {config_path.name} — skipped.")
                 continue
-            print(f"  ✓ Patched {config_path}")
+            print(f"+ Patched {config_path}")
         except Exception as e:
-            print(f"  ✗ Failed to patch {config_path}: {e}")
+            print(f"- Failed to patch {config_path}: {e}")
 
 
 # ── main ─────────────────────────────────────────────────────

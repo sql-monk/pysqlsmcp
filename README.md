@@ -41,22 +41,17 @@ The installer asks for a SQL Server instance name and then offers to create:
 
 | Option | Script | What it creates |
 |--------|--------|-----------------|
-| **Server-level** | [`scripts/mcp-server.sql`](scripts/mcp-server.sql) | Login `mcp-server` + read-only server roles (SQL Server 2022+) |
-| **Database-level** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Login `mcp-{database}`, user, role with metadata-only grants; data read/write denied |
+| **Per database** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Login `mcp-{database}`, user, role with metadata-only grants; data read/write denied |
 
-You can create database-level users for multiple databases in one session.
+You can create users for multiple databases in one session.
 
 > **Security:** passwords are generated at runtime using `secrets` (40 chars, mixed case + digits + specials). They are passed to `mssql_python` in memory and **never stored or displayed**.
 
 The connection to SQL Server uses Windows Authentication (`Trusted_Connection=yes`), so run the installer under an account that has `sysadmin` or `securityadmin` rights on the target instance.
 
-After creating the logins you still need to grant `IMPERSONATE` to the connecting login:
+After creating the users you still need to grant `IMPERSONATE` to the connecting login:
 
 ```sql
--- For mcplevel=0:
-GRANT IMPERSONATE ON LOGIN::[mcp-server] TO [connecting_login];
-
--- For mcplevel=1 (per database):
 GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 ```
 
@@ -123,23 +118,18 @@ This returns the XML execution plan without running the query.
 
 Impersonation is the core security mechanism. The connecting login (e.g. Windows auth or SQL auth) is **never** the identity that runs user queries. Instead, `DbProvider` immediately switches context after the SET preamble.
 
-#### Two impersonation levels (`mcplevel`)
+Every tool accepts an `impersonate` parameter — the name of the database user to impersonate:
 
-Every tool accepts an `mcplevel` parameter (default `0`):
-
-| `mcplevel` | `EXECUTE AS` statement | Effective identity | Use case |
-|------------|------------------------|-------------------|----------|
-| `0` | `EXECUTE AS LOGIN = N'mcp-server'` | Server-level login `mcp-server` | Broad read-only access across all databases via server roles |
-| `1` | `EXECUTE AS USER = N'mcp-{database}'` | Database-level user `mcp-{database}` | Fine-grained per-database permissions via database roles |
+```
+EXECUTE AS USER = N'{impersonate}'
+```
 
 #### How it works step-by-step
 
 1. Connection is established with the caller's credentials (SQL auth or Windows auth).
 2. `_SET_PREAMBLE` is executed (isolation, lock timeout, deadlock priority).
-3. `EXECUTE AS LOGIN` or `EXECUTE AS USER` switches the security context.
-4. A verification check confirms the switch actually happened:
-   - Level 0: `SYSTEM_USER` must equal `mcp-server`
-   - Level 1: `USER_NAME()` must equal `mcp-{database}`
+3. `EXECUTE AS USER` switches the security context to the specified user.
+4. A verification check confirms the switch actually happened: `USER_NAME()` must equal the `impersonate` value.
 5. If verification fails — `REVERT` + `RAISERROR` — the query never runs.
 6. The user query executes under the impersonated identity.
 7. `REVERT` restores the original context (always runs, even on error via `finally`).
@@ -147,7 +137,7 @@ Every tool accepts an `mcplevel` parameter (default `0`):
 #### Why this matters
 
 - The connecting login needs only `IMPERSONATE` permission, not direct data access.
-- Permissions are centrally managed on the `mcp-server` login / `mcp-{database}` users.
+- Permissions are centrally managed on the `mcp-{database}` users.
 - Even if an AI agent crafts a malicious query, it runs under the restricted impersonated identity.
 - The verification step prevents silent failures where `EXECUTE AS` succeeds syntactically but the context is not what was expected.
 
@@ -155,7 +145,7 @@ Every tool accepts an `mcplevel` parameter (default `0`):
 
 ## Tools
 
-All tools accept `server`, `username?`, `password?`, and `mcplevel?` (default `0`).
+All tools accept `server`, `username?`, `password?`, and `impersonate`.
 When `username`/`password` are omitted, Windows Authentication (`Trusted_Connection=yes`) is used.
 
 | Tool | Extra parameters | Description |
@@ -175,8 +165,7 @@ sqlsmcp.py                 — Entry point (stdio transport), registers all tool
 db_provider.py             — Connection, SET preamble, EXECUTE AS, query execution
 install.py                 — Interactive installer (SQL users, agent config)
 scripts/
-  mcp-server.sql           — Server-level login DDL template
-  mcp-database.sql         — Database-level user/role DDL template
+  mcp-database.sql         — User/role DDL template
 tools/
   execute_query.py         — executeQuery tool
   explain_query.py         — explainQuery tool

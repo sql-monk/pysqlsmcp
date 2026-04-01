@@ -16,7 +16,7 @@ def _run(db_provider: DbProvider, object: str) -> str:
 
 def _run_recursive(server: str, database: str, object: str,
                    username: str | None, password: str | None,
-                   mcplevel: int) -> str:
+                   impersonate: str) -> str:
     all_rows: list[list] = []
     visited: set[str] = set()
     columns: list[str] | None = None
@@ -34,7 +34,7 @@ def _run_recursive(server: str, database: str, object: str,
                 continue
             visited.add(key)
 
-            provider = DbProvider(server, db, username, password, mcplevel)
+            provider = DbProvider(server, db, username, password, impersonate)
             result = json.loads(_run(provider, obj))
 
             if "error" in result:
@@ -70,7 +70,7 @@ def register(mcp):
         object: str,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        mcplevel: int = 0,
+        impersonate: str = "",
     ) -> str:
         return _run_recursive(server, database, object,
-                              username, password, mcplevel)
+                              username, password, impersonate)

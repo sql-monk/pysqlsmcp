@@ -20,7 +20,7 @@ def register(mcp):
         object_filter: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        mcplevel: int = 0,
+        impersonate: str = "",
     ) -> str:
-        db_provider = DbProvider(server, database, username, password, mcplevel)
+        db_provider = DbProvider(server, database, username, password, impersonate)
         return _run(db_provider, user_filter, object_filter)
