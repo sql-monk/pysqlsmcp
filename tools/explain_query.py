@@ -8,9 +8,9 @@ def register(mcp):
         server: str,
         database: str,
         query: str,
+        impersonate: str,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        impersonate: str = "",
     ) -> str:
-        db_provider = DbProvider(server, database, username, password, impersonate)
+        db_provider = DbProvider(server, database, impersonate)
         return db_provider.explain_query(query)

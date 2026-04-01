@@ -22,7 +22,7 @@ ORDER BY name
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, impersonate: str = "", timeout: int = 90):
+    def __init__(self, server: str, database: str, impersonate: str, timeout: int = 90):
         self._server = server
         self._database = database
         self._impersonate = impersonate

@@ -118,7 +118,7 @@ This returns the XML execution plan without running the query.
 
 Impersonation is the core security mechanism. The connecting login (e.g. Windows auth or SQL auth) is **never** the identity that runs user queries. Instead, `DbProvider` immediately switches context after the SET preamble.
 
-Every tool accepts an `impersonate` parameter — the name of the database user to impersonate:
+Every tool requires an `impersonate` parameter — the name of the database user to impersonate:
 
 ```
 EXECUTE AS USER = N'{impersonate}'
@@ -145,7 +145,7 @@ EXECUTE AS USER = N'{impersonate}'
 
 ## Tools
 
-All tools accept `server`, `username?`, `password?`, and `impersonate`.
+All tools accept `server`, `impersonate`, `username?`, and `password?`.
 When `username`/`password` are omitted, Windows Authentication (`Trusted_Connection=yes`) is used.
 
 | Tool | Extra parameters | Description |

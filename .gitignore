@@ -9,3 +9,6 @@ tests/
 *.pem
 
 claude.code-workspace
+test_results*.md
+run_tests.py
+.gitignore

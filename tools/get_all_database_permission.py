@@ -8,19 +8,19 @@ def register(mcp):
     @mcp.tool()
     def getAllDatabasePermission(
         server: str,
+        impersonate: str,
         user_filter: Optional[str] = None,
         object_filter: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        impersonate: str = "",
     ) -> str:
-        master = DbProvider(server, "master", username, password, impersonate)
+        master = DbProvider(server, "master", impersonate)
         databases = master.list_databases()
         all_rows: list = []
         all_columns: list = []
         errors: list = []
         for db in databases:
-            result_json = run_permission(DbProvider(server, db, username, password, impersonate), user_filter, object_filter)
+            result_json = run_permission(DbProvider(server, db, impersonate), user_filter, object_filter)
             result = json.loads(result_json)
             if "error" in result:
                 errors.append({"database": db, **result})

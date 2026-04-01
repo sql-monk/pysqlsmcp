@@ -16,11 +16,11 @@ def register(mcp):
     def getDatabasePermission(
         server: str,
         database: str,
+        impersonate: str,
         user_filter: Optional[str] = None,
         object_filter: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        impersonate: str = "",
     ) -> str:
-        db_provider = DbProvider(server, database, username, password, impersonate)
+        db_provider = DbProvider(server, database, impersonate)
         return _run(db_provider, user_filter, object_filter)
