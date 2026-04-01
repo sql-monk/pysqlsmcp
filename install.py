@@ -1,6 +1,5 @@
 """
 pysqlsmcp installer
-  - generates TLS certificates (if missing)
   - creates SQL Server logins / users via scripts/mcp-server.sql or scripts/mcp-database.sql
   - registers the MCP server in agent config files (VS Code, Claude Desktop, etc.)
 """
@@ -17,8 +16,6 @@ import mssql_python
 
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
-CERT_FILE = ROOT / "cert.pem"
-KEY_FILE = ROOT / "key.pem"
 
 # ── helpers ──────────────────────────────────────────────────
 
@@ -46,61 +43,7 @@ def _generate_password(length: int = 40) -> str:
             return pwd
 
 
-# ── 1. certificates ─────────────────────────────────────────
-
-def ensure_certificates() -> None:
-    _heading("TLS Certificates")
-    if CERT_FILE.exists() and KEY_FILE.exists():
-        print(f"  cert.pem and key.pem already exist — skipping.")
-        return
-
-    print("  Generating self-signed certificate …")
-    from cryptography import x509
-    from cryptography.x509.oid import NameOID
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    import datetime
-    import ipaddress
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    KEY_FILE.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
-        )
-    )
-
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]
-    )
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(
-            datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=365)
-        )
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-                ]
-            ),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    CERT_FILE.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    print("  ✓ cert.pem and key.pem created.")
-
-
-# ── 2. SQL Server users ─────────────────────────────────────
+# ── 1. SQL Server users ──────────────────────────────────────
 
 def _run_sql_script(server: str, script_path: Path, replacements: dict[str, str],
                     database: str = "master") -> None:
@@ -162,7 +105,7 @@ def setup_sql_users() -> None:
         print(f"  ✓ Database-level user 'mcp-{db_name}' created (password auto-generated, not stored).")
 
 
-# ── 3. agent integration ────────────────────────────────────
+# ── 2. agent integration ────────────────────────────────────
 
 KNOWN_CONFIGS = {
     "VS Code (user)": {
@@ -176,24 +119,11 @@ KNOWN_CONFIGS = {
 }
 
 
-def _server_entry_vscode(host: str, port: int) -> dict:
-    return {
-        "type": "http",
-        "url": f"https://{host}:{port}/mcp/",
-    }
-
-
-def _server_entry_claude(host: str, port: int) -> dict:
+def _server_entry() -> dict:
     python = sys.executable
     return {
         "command": python,
-        "args": [
-            str(ROOT / "server.py"),
-            "--certfile", str(CERT_FILE),
-            "--keyfile", str(KEY_FILE),
-            "--host", host,
-            "--port", str(port),
-        ],
+        "args": [str(ROOT / "sqlsmcp.py")],
     }
 
 
@@ -215,19 +145,19 @@ def _find_config_files(search_root: Path) -> list[Path]:
     return found
 
 
-def _patch_vscode_mcp(config_path: Path, host: str, port: int) -> None:
+def _patch_vscode_mcp(config_path: Path) -> None:
     data = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     servers = data.setdefault("servers", {})
-    servers["pysqlsmcp"] = _server_entry_vscode(host, port)
+    servers["pysqlsmcp"] = _server_entry()
     if "inputs" not in data:
         data["inputs"] = []
     config_path.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _patch_claude_config(config_path: Path, host: str, port: int) -> None:
+def _patch_claude_config(config_path: Path) -> None:
     data = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     servers = data.setdefault("mcpServers", {})
-    servers["pysqlsmcp"] = _server_entry_claude(host, port)
+    servers["pysqlsmcp"] = _server_entry()
     config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -235,10 +165,6 @@ def setup_agent_integration() -> None:
     _heading("Agent Integration")
     if not _ask_yes_no("Register pysqlsmcp in an agent config?"):
         return
-
-    host = input("  Server host [localhost]: ").strip() or "localhost"
-    port_str = input("  Server port [4433]: ").strip() or "4433"
-    port = int(port_str)
 
     home = Path.home()
     search_root_str = input(f"  Search for config files in [{home}]: ").strip()
@@ -263,9 +189,9 @@ def setup_agent_integration() -> None:
     for config_path in selected:
         try:
             if config_path.name == "mcp.json":
-                _patch_vscode_mcp(config_path, host, port)
+                _patch_vscode_mcp(config_path)
             elif config_path.name == "claude_desktop_config.json":
-                _patch_claude_config(config_path, host, port)
+                _patch_claude_config(config_path)
             else:
                 print(f"  ⚠ Unknown config format: {config_path.name} — skipped.")
                 continue
@@ -278,7 +204,6 @@ def setup_agent_integration() -> None:
 
 def main() -> None:
     _heading("pysqlsmcp installer")
-    ensure_certificates()
     setup_sql_users()
     setup_agent_integration()
     print("\n  Done.\n")

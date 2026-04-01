@@ -173,7 +173,7 @@ When `username`/`password` are omitted, Windows Authentication (`Trusted_Connect
 ```
 sqlsmcp.py                 — Entry point (stdio transport), registers all tools
 db_provider.py             — Connection, SET preamble, EXECUTE AS, query execution
-install.py                 — Interactive installer (certs, SQL users, agent config)
+install.py                 — Interactive installer (SQL users, agent config)
 scripts/
   mcp-server.sql           — Server-level login DDL template
   mcp-database.sql         — Database-level user/role DDL template
