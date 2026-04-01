@@ -15,7 +15,6 @@ from pathlib import Path
 
 import mssql_python
 
-from deploy_test_databases import setup_test_databases
 
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
@@ -200,7 +199,6 @@ def setup_agent_integration() -> None:
 def main() -> None:
     _heading("pysqlsmcp installer")
     setup_sql_users()
-    setup_test_databases()
     setup_agent_integration()
     print("\n  Done.\n")
 
