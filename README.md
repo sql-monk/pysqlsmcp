@@ -1,12 +1,11 @@
 # pysqlsmcp
 
-Python MCP (Model Context Protocol) server for safe, read-oriented access to Microsoft SQL Server. Built with [FastMCP](https://github.com/jlowin/fastmcp), [`mssql-python`](https://pypi.org/project/mssql-python/) and served over HTTPS via Uvicorn.
+Python MCP (Model Context Protocol) server for safe, read-oriented access to Microsoft SQL Server. Built with [FastMCP](https://github.com/jlowin/fastmcp) and [`mssql-python`](https://pypi.org/project/mssql-python/), communicates via stdio transport.
 
 ## Key design principles
 
 1. **Impersonation-first security** — every query runs under `EXECUTE AS`, never under the connecting login's own permissions.
 2. **Defensive SET preamble** — session settings are forced before every statement to prevent blocking and priority escalation.
-3. **TLS only** — the server requires a certificate; plain HTTP is not supported.
 
 ---
 
@@ -15,19 +14,11 @@ Python MCP (Model Context Protocol) server for safe, read-oriented access to Mic
 ```bash
 pip install -r requirements.txt
 
-# interactive installer (certificates, SQL users, agent config)
+# interactive installer (SQL users, agent config)
 python install.py
-
-# start the server
-python server.py
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind address |
-| `--port` | `4433` | Bind port |
-| `--certfile` | `cert.pem` | Path to TLS certificate |
-| `--keyfile` | `key.pem` | Path to TLS private key |
+The server is started automatically by the MCP client (VS Code, Claude Desktop, etc.) via stdio — no manual launch needed.
 
 ---
 
@@ -38,17 +29,13 @@ The interactive installer handles all setup steps. Run it once after cloning:
 ```bash
 pip install -r requirements.txt
 
-# interactive installer (certificates, SQL users, agent config)
+# interactive installer (SQL users, agent config)
 python install.py
 ```
 
-The installer walks through three stages:
+The installer walks through two stages:
 
-### 1. TLS certificates
-
-If `cert.pem` and `key.pem` do not exist in the project root, a self-signed certificate is generated automatically (localhost / 127.0.0.1, valid for 1 year). Existing certificates are kept as-is.
-
-### 2. SQL Server users
+### 1. SQL Server users
 
 The installer asks for a SQL Server instance name and then offers to create:
 
@@ -73,11 +60,11 @@ GRANT IMPERSONATE ON LOGIN::[mcp-server] TO [connecting_login];
 GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 ```
 
-### 3. Agent integration
+### 2. Agent integration
 
 The installer can register pysqlsmcp in agent config files so the MCP server is available immediately.
 
-It asks for host/port (defaults: `localhost:4433`), then searches for config files:
+It searches for config files:
 
 | Agent | Config file | Key |
 |-------|------------|-----|
@@ -92,8 +79,9 @@ Example resulting VS Code entry (`.vscode/mcp.json`):
 {
   "servers": {
     "pysqlsmcp": {
-      "type": "http",
-      "url": "https://localhost:4433/mcp/"
+      "type": "stdio",
+      "command": "python",
+      "args": ["path/to/pysqlsmcp/sqlsmcp.py"]
     }
   }
 }
@@ -183,7 +171,7 @@ When `username`/`password` are omitted, Windows Authentication (`Trusted_Connect
 ## Project structure
 
 ```
-server.py                  — Uvicorn HTTPS entry point, registers all tools
+sqlsmcp.py                 — Entry point (stdio transport), registers all tools
 db_provider.py             — Connection, SET preamble, EXECUTE AS, query execution
 install.py                 — Interactive installer (certs, SQL users, agent config)
 scripts/
