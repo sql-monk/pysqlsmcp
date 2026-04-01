@@ -6,14 +6,7 @@ from tools.get_database_permission import _run as run_permission
 
 def register(mcp):
     @mcp.tool()
-    def getAllDatabasePermission(
-        server: str,
-        impersonate: str,
-        user_filter: Optional[str] = None,
-        object_filter: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-    ) -> str:
+    def getAllDatabasePermission(server: str, impersonate: str, user_filter: Optional[str] = None, object_filter: Optional[str] = None) -> str:
         master = DbProvider(server, "master", impersonate)
         databases = master.list_databases()
         all_rows: list = []

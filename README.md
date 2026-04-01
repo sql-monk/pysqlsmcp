@@ -15,14 +15,14 @@ Python MCP (Model Context Protocol) server for safe, read-oriented access to Mic
 pip install -r requirements.txt
 
 # interactive installer (SQL users, agent config)
-python install.py
+python deploy/install.py
 ```
 
 The server is started automatically by the MCP client (VS Code, Claude Desktop, etc.) via stdio — no manual launch needed.
 
 ---
 
-## Installation (`install.py`)
+## Installation (`deploy/install.py`)
 
 The interactive installer handles all setup steps. Run it once after cloning:
 
@@ -30,7 +30,7 @@ The interactive installer handles all setup steps. Run it once after cloning:
 pip install -r requirements.txt
 
 # interactive installer (SQL users, agent config)
-python install.py
+python deploy/install.py
 ```
 
 The installer walks through two stages:
@@ -41,7 +41,7 @@ The installer asks for a SQL Server instance name and then offers to create:
 
 | Option | Script | What it creates |
 |--------|--------|-----------------|
-| **Per database** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Login `mcp-{database}`, user, role with metadata-only grants; data read/write denied |
+| **Per database** | [`deploy/scripts/mcp-database.sql`](deploy/scripts/mcp-database.sql) | Login `mcp-{database}`, user, role with metadata-only grants; data read/write denied |
 
 You can create users for multiple databases in one session.
 
@@ -145,8 +145,7 @@ EXECUTE AS USER = N'{impersonate}'
 
 ## Tools
 
-All tools accept `server`, `impersonate`, `username?`, and `password?`.
-When `username`/`password` are omitted, Windows Authentication (`Trusted_Connection=yes`) is used.
+All tools accept `server` and `impersonate`. Windows Authentication (`Trusted_Connection=yes`) is always used.
 
 | Tool | Extra parameters | Description |
 |------|-----------------|-------------|
@@ -163,9 +162,10 @@ When `username`/`password` are omitted, Windows Authentication (`Trusted_Connect
 ```
 sqlsmcp.py                 — Entry point (stdio transport), registers all tools
 db_provider.py             — Connection, SET preamble, EXECUTE AS, query execution
-install.py                 — Interactive installer (SQL users, agent config)
-scripts/
-  mcp-database.sql         — User/role DDL template
+deploy/
+  install.py               — Interactive installer (SQL users, agent config)
+  scripts/
+    mcp-database.sql       — User/role DDL template
 tools/
   execute_query.py         — executeQuery tool
   explain_query.py         — explainQuery tool

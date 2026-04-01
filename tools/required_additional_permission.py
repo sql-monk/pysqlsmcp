@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import Optional
 from db_provider import DbProvider
 
 _SQL_DIR = Path(__file__).parent / "sql"
@@ -14,8 +13,7 @@ def _run(db_provider: DbProvider, object: str) -> str:
     return db_provider.execute_query(REQUIRED_PERM_QUERY, params)
 
 
-def _run_recursive(server: str, database: str, object: str,
-                   impersonate: str) -> str:
+def _run_recursive(server: str, database: str, object: str, impersonate: str) -> str:
     all_rows: list[list] = []
     visited: set[str] = set()
     columns: list[str] | None = None
@@ -68,8 +66,6 @@ def register(mcp):
         database: str,
         object: str,
         impersonate: str,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
     ) -> str:
         return _run_recursive(server, database, object,
                               impersonate)

@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT / "tests"
 REPORT_DIR = ROOT / "reports"
 

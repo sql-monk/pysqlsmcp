@@ -15,14 +15,14 @@ Python MCP (Model Context Protocol) сервер для безпечного, о
 pip install -r requirements.txt
 
 # інтерактивний інсталятор (SQL-користувачі, конфіг агентів)
-python install.py
+python deploy/install.py
 ```
 
 Сервер запускається автоматично MCP-клієнтом (VS Code, Claude Desktop тощо) через stdio — ручний запуск не потрібен.
 
 ---
 
-## Встановлення (`install.py`)
+## Встановлення (`deploy/install.py`)
 
 Інтерактивний інсталятор виконує всі кроки налаштування. Запустіть один раз після клонування:
 
@@ -30,7 +30,7 @@ python install.py
 pip install -r requirements.txt
 
 # інтерактивний інсталятор (SQL-користувачі, конфіг агентів)
-python install.py
+python deploy/install.py
 ```
 
 Інсталятор проходить через два етапи:
@@ -41,7 +41,7 @@ python install.py
 
 | Опція | Скрипт | Що створює |
 |-------|--------|------------|
-| **На базу даних** | [`scripts/mcp-database.sql`](scripts/mcp-database.sql) | Логін `mcp-{database}`, користувач, роль із правами лише на метадані; читання/запис даних заборонено |
+| **На базу даних** | [`deploy/scripts/mcp-database.sql`](deploy/scripts/mcp-database.sql) | Логін `mcp-{database}`, користувач, роль із правами лише на метадані; читання/запис даних заборонено |
 
 Можна створити користувачів для декількох баз за один сеанс.
 
@@ -145,8 +145,7 @@ EXECUTE AS USER = N'{impersonate}'
 
 ## Інструменти
 
-Усі інструменти приймають `server`, `impersonate`, `username?` та `password?`.
-Коли `username`/`password` не вказані, використовується Windows Authentication (`Trusted_Connection=yes`).
+Усі інструменти приймають `server` та `impersonate`. Завжди використовується Windows Authentication (`Trusted_Connection=yes`).
 
 | Інструмент | Додаткові параметри | Опис |
 |------------|-------------------|------|
@@ -163,9 +162,10 @@ EXECUTE AS USER = N'{impersonate}'
 ```
 sqlsmcp.py                 — Точка входу (stdio транспорт), реєструє всі інструменти
 db_provider.py             — З'єднання, SET-преамбул, EXECUTE AS, виконання запитів
-install.py                 — Інтерактивний інсталятор (SQL-користувачі, конфіг агентів)
-scripts/
-  mcp-database.sql         — DDL-шаблон для користувача/ролі
+deploy/
+  install.py               — Інтерактивний інсталятор (SQL-користувачі, конфіг агентів)
+  scripts/
+    mcp-database.sql       — DDL-шаблон для користувача/ролі
 tools/
   execute_query.py         — інструмент executeQuery
   explain_query.py         — інструмент explainQuery
