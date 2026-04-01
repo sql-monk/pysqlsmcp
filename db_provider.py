@@ -22,21 +22,13 @@ ORDER BY name
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, username: str | None = None, password: str | None = None, impersonate: str = "", timeout: int = 90):
+    def __init__(self, server: str, database: str, impersonate: str = "", timeout: int = 90):
         self._server = server
         self._database = database
-        self._username = username
-        self._password = password
         self._impersonate = impersonate
         self._timeout = timeout
 
     def _connection_string(self) -> str:
-        if self._username and self._password:
-            return (
-                f"SERVER={self._server};DATABASE={self._database};"
-                f"UID={self._username};PWD={self._password};"
-                "TrustServerCertificate=yes;"
-            )
         return (
             f"SERVER={self._server};DATABASE={self._database};"
             "Trusted_Connection=yes;TrustServerCertificate=yes;"
@@ -45,8 +37,8 @@ class DbProvider:
     def _impersonate_sql(self) -> str:
         name = self._impersonate.replace("'", "''")
         return (
-            f"EXECUTE AS USER = N'{name}';\n"
-            f"DECLARE @__mcp_check NVARCHAR(256) = USER_NAME();\n"
+            f"EXECUTE AS LOGIN = N'{name}';\n"
+            f"DECLARE @__mcp_check NVARCHAR(128) = USER_NAME();\n"
             f"IF @__mcp_check <> N'{name}'\n"
             f"BEGIN\n"
             f"    REVERT;\n"
@@ -110,23 +102,12 @@ class DbProvider:
             try:
                 cursor = conn.cursor()
                 cursor.execute(_SET_PREAMBLE)
-                cursor.execute(self._impersonate_sql())
-                try:
-                    cursor.execute("SET SHOWPLAN_XML ON;")
-                    cursor.execute(query)
-                    row = cursor.fetchone()
-                    plan_xml = row[0] if row else None
-                    cursor.execute("SET SHOWPLAN_XML OFF;")
-                    result = {"query": query, "plan": plan_xml}
-                finally:
-                    try:
-                        cursor.execute("SET SHOWPLAN_XML OFF;")
-                    except Exception:
-                        pass
-                    try:
-                        cursor.execute("REVERT;")
-                    except Exception:
-                        pass
+                cursor.execute("SET SHOWPLAN_XML ON;")
+                cursor.execute(query)
+                row = cursor.fetchone()
+                plan_xml = row[0] if row else None
+                cursor.execute("SET SHOWPLAN_XML OFF;")
+                result = {"query": query, "plan": plan_xml}
             finally:
                 conn.close()
         except Exception as e:
