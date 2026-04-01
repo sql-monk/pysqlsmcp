@@ -2,13 +2,11 @@ __pycache__/
 .venv/
 .pytest_cache/
 .vscode/
-tests/
 
 *.pyc
 *.pyo
 *.pem
 
 claude.code-workspace
-test_results*.md
-run_tests.py
 .gitignore
+

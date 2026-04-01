@@ -15,6 +15,8 @@ from pathlib import Path
 
 import mssql_python
 
+from deploy_test_databases import setup_test_databases
+
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
 
@@ -98,57 +100,7 @@ def setup_sql_users() -> None:
         print(f"+ User 'mcp-{db_name}' created (password auto-generated, not stored).")
 
 
-# ── 2. deploy test databases ─────────────────────────────────
-
-def _run_sql_script_raw(server: str, script_path: Path, replacements: dict[str, str]) -> None:
-    """Execute a multi-database .sql script via master, keeping USE/GO semantics."""
-    sql = script_path.read_text(encoding="utf-8")
-    for placeholder, value in replacements.items():
-        sql = sql.replace(placeholder, value)
-
-    batches = re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE)
-
-    conn_str = (
-        f"SERVER={server};DATABASE=master;"
-        "Trusted_Connection=yes;TrustServerCertificate=yes;"
-    )
-    conn = mssql_python.connect(conn_str)
-    try:
-        cursor = conn.cursor()
-        for batch in batches:
-            batch = batch.strip()
-            if batch:
-                cursor.execute(batch)
-    finally:
-        conn.close()
-
-
-def setup_test_databases() -> None:
-    _heading("Test Databases")
-    if not _ask_yes_no("Deploy test databases (mcp_test_main, mcp_test_aux)?", default=False):
-        return
-
-    server = input("  SQL Server instance (e.g. localhost): ").strip()
-    if not server:
-        print("  - Skipped — no server provided.")
-        return
-
-    replacements = {
-        "{{PASSWORD_READER}}": _generate_password(),
-        "{{PASSWORD_WRITER}}": _generate_password(),
-        "{{PASSWORD_ADMIN}}":  _generate_password(),
-    }
-
-    try:
-        _run_sql_script_raw(server, SCRIPTS / "deploy-test-databases.sql", replacements)
-        print("+ Databases mcp_test_main and mcp_test_aux deployed successfully.")
-        print("  Test users: mcp-test-reader, mcp-test-writer, mcp-test-admin")
-        print("  NOTE: Grant IMPERSONATE on these users to your connecting login.")
-    except Exception as e:
-        print(f"- Failed to deploy test databases: {e}")
-
-
-# ── 3. agent integration ────────────────────────────────────
+# ── 2. agent integration ─────────────────────────────────────
 
 KNOWN_CONFIGS = {
     "VS Code (user)": {
