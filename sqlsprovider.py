@@ -100,7 +100,3 @@ class SQLSProvider:
             }
             self._log(query, message=e, params=params, type="ERROR")
         return json.dumps(result, default=str)
-
-    def execute_script(self, script_path: str, params: tuple | None = None) -> str:
-        query = Path(script_path).read_text(encoding="utf-8")
-        return self.execute_query(query, params)
