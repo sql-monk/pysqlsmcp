@@ -12,3 +12,4 @@ reports/
 
 claude.code-workspace
 .gitignore
+debug.log.md

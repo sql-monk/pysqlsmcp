@@ -8,7 +8,7 @@ def register(mcp):
         database: str,
         query: str,
         impersonate: str,
-        params: tuple = None,
+        params: list = None,
     ) -> str:
         db_provider = DbProvider(server, database, impersonate)
-        return db_provider.execute_query(query, params=params, explain=True)
+        return db_provider.execute_query(query, params=tuple(params) if params else None, explain=True)

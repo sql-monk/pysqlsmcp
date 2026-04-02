@@ -7,7 +7,6 @@ import os
 import re
 
 _LOG_PATH = Path(__file__).parent / "debug.log.md"
-_SQL_DIR = Path(__file__).parent / "tools" / "sql"
 
 _SET_PREAMBLE = """
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -17,7 +16,7 @@ SET DEADLOCK_PRIORITY LOW;
 
 
 class DbProvider:
-    def __init__(self, server: str, database: str, impersonate: str, timeout: int = 90, dbgmode: bool | None = None):
+    def __init__(self, server: str, database: str, impersonate: str = "mcp-server", timeout: int = 90, dbgmode: bool | None = None):
         self._server = server
         self._database = database
         self._impersonate = impersonate
