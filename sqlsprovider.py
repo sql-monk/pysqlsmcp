@@ -31,17 +31,7 @@ class SQLSProvider:
     def _impersonate_sql(self) -> str:
         name = self._impersonate.replace("'", "''")
         return (
-            f"DECLARE @__mcp_check NVARCHAR(128) = USER_NAME();\n"
-            f"IF @__mcp_check <> N'{name}'\n"
-            f"BEGIN\n"
-            f"  EXECUTE AS LOGIN = N'{name}';\n"
-            f"  SELECT @__mcp_check = USER_NAME();\n"
-            f"  IF @__mcp_check <> N'{name}'\n"
-            f"  BEGIN\n"
-            f"      REVERT;\n"
-            f"      RAISERROR('MCP impersonation failed: USER_NAME()=[%s]', 16, 1, @__mcp_check);\n"
-            f"  END\n"
-            f"END\n"
+            f"EXECUTE AS LOGIN = N'{name}';\nSELECT SYSTEM_USER AS impersonat_check;"
         )
 
     def _log(self, query: str, message: str = "", params: tuple | None = None, type: str = "COMPLETE") -> None:
@@ -73,21 +63,23 @@ class SQLSProvider:
                     result = {"query": query, "plan": plan_xml}
                 else:
                     cursor.execute(self._impersonate_sql())
-                    cursor.execute(query, params or ())
-                    if cursor.description:
-                        rows = cursor.fetchall()
-                        columns = [desc[0] for desc in cursor.description]
-                        result = {
-                            "query": query,
-                            "rowCount": len(rows),
-                            "columns": columns,
-                            "rows": [list(row) for row in rows],
-                        }
-                    else:
-                        result = {
-                            "query": query,
-                            "rowCount": cursor.rowcount if cursor.rowcount >= 0 else 0,
-                        }
+                    rowImp = cursor.fetchone()
+                    if rowImp and rowImp[0].lower() == self._impersonate.lower():
+                        cursor.execute(query, params or ())
+                        if cursor.description:
+                            rows = cursor.fetchall()
+                            columns = [desc[0] for desc in cursor.description]
+                            result = {
+                                "query": query,
+                                "rowCount": len(rows),
+                                "columns": columns,
+                                "rows": [list(row) for row in rows],
+                            }
+                        else:
+                            result = {
+                                "query": query,
+                                "rowCount": cursor.rowcount if cursor.rowcount >= 0 else 0,
+                            }
             finally:
                 conn.close()
                 self._log(query, params=params)
