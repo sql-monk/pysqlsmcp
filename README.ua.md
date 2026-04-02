@@ -57,16 +57,26 @@ GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 
 ### 2. Інтеграція з агентами
 
-Інсталятор може зареєструвати pysqlsmcp у конфігураційних файлах агентів, щоб MCP-сервер був доступний одразу.
+Інсталятор може зареєструвати сервери pysqlsmcp у конфігураційних файлах агентів, щоб MCP-сервери були доступні одразу.
+
+**MCP-сервери:**
+- `sqlsmcp.py` — Основний сервер із інструментом `executeQuery` для ad-hoc SQL-запитів
+- `sqlscriptmcp.py` — Скриптовий сервер, який автоматично реєструє всі `.sql` файли з `sql_tools/` як MCP-інструменти
 
 Виконується пошук конфігураційних файлів:
 
 | Агент | Конфігураційний файл | Ключ |
 |-------|---------------------|------|
-| VS Code | `mcp.json` | `servers.pysqlsmcp` |
-| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp` |
+| VS Code | `mcp.json` | `servers.pysqlsmcp`, `servers.pysqlsmcp-scripts` |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp`, `mcpServers.pysqlsmcp-scripts` |
 
-Пошук починається з `%APPDATA%` (відомі розташування) та директорії, вказаної користувачем (за замовчуванням: домашня папка). Можна обрати, які знайдені конфіги оновити.
+Пошук починається з `%APPDATA%` (відомі розташування) та директорії, вказаної користувачем (за замовчуванням: домашня папка). Можна обрати, які знайдені конфіги оновити та які MCP-сервери зареєструвати.
+
+**Швидка реєстрація з параметрами за замовчуванням:**
+```bash
+python deploy/config_agnet.py --default
+```
+Це автоматично реєструє всі знайдені MCP-сервери у всіх знайдених конфігах агентів.
 
 Приклад результату для VS Code (`.vscode/mcp.json`):
 
@@ -77,6 +87,11 @@ GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
       "type": "stdio",
       "command": "python",
       "args": ["path/to/pysqlsmcp/sqlsmcp.py"]
+    },
+    "pysqlsmcp-scripts": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["path/to/pysqlsmcp/sqlscriptmcp.py"]
     }
   }
 }
@@ -145,36 +160,80 @@ EXECUTE AS USER = N'{impersonate}'
 
 ## Інструменти
 
-Усі інструменти приймають `server` та `impersonate`. Завжди використовується Windows Authentication (`Trusted_Connection=yes`).
+### Основний сервер (`sqlsmcp.py`)
 
 | Інструмент | Додаткові параметри | Опис |
 |------------|-------------------|------|
-| `executeQuery` | `database`, `query` | Виконує довільний запит під імперсоналізацією та повертає рядки + колонки у JSON |
-| `explainQuery` | `database`, `query` | Повертає XML-план виконання (`SHOWPLAN_XML`) без виконання запиту |
-| `getDatabasePermission` | `database`, `user_filter?`, `object_filter?` | Виводить членство в ролях та права для однієї бази даних (запитує `sys.database_role_members` + `sys.database_permissions`) |
-| `getAllDatabasePermission` | `user_filter?`, `object_filter?` | Виконує `getDatabasePermission` по всіх доступних базах даних та агрегує результати |
-| `requiredAdditionalPermission` | `database`, `object` | Виводить крос-схемні та крос-базові залежності для збереженої процедури або представлення (через `sys.sql_expression_dependencies`) |
+| `executeQuery` | `database`, `query`, `params?` | Виконує довільний запит під імперсоналізацією та повертає рядки + колонки у JSON |
+
+### Скриптовий сервер (`sqlscriptmcp.py`)
+
+Автоматично реєструє всі `.sql` файли з `sql_tools/` як MCP-інструменти. Кожен SQL-файл стає інструментом з власними параметрами.
+
+**Формат SQL-файлу:**
+```sql
+/*
+Опис інструменту (може бути багаторядковим)
+
+@param_name - опис параметра
+@another    - опис іншого параметра
+*/
+
+DECLARE
+    @param_name INT,
+    @another    NVARCHAR(128);
+
+SELECT ... WHERE col = @param_name AND another = @another
+```
+
+**Вбудовані SQL-інструменти:**
+
+| Інструмент | Параметри | Опис |
+|------------|-----------|------|
+| `getIndexUsage` | `database`, `table_name?` | Отримати статистику використання індексів для таблиць |
+| `getTableSizes` | `database`, `schema_name?`, `table_name?` | Отримати розміри таблиць включно з кількістю рядків та використанням простору |
+| `getWaitStats` | `database` | Отримати статистику очікувань SQL Server |
+| `getDatabasePermission` | `database`, `user_filter?`, `object_filter?` | Виводить членство в ролях та права для бази даних |
+| `requiredAdditionalPermission` | `database`, `object` | Виводить крос-схемні та крос-базові залежності |
+
+### Застарілі інструменти
+
+Наступні інструменти все ще доступні в директорії `tools/`, але більше не є частиною основних MCP-серверів:
+- `explainQuery` — Повертає XML-план виконання без виконання запиту
+- `getAllDatabasePermission` — Виконує `getDatabasePermission` по всіх доступних базах даних
+
+Усі інструменти приймають параметри `server` та `impersonate`. Завжди використовується Windows Authentication (`Trusted_Connection=yes`).
 
 ---
 
 ## Структура проєкту
 
 ```
-sqlsmcp.py                 — Точка входу (stdio транспорт), реєструє всі інструменти
+sqlsmcp.py                 — Точка входу для основного MCP-сервера (лише executeQuery)
+sqlscriptmcp.py            — Точка входу для скриптового MCP-сервера (авто-завантаження sql_tools/)
 sqlsprovider.py            — З'єднання, SET-преамбул, EXECUTE AS, виконання запитів
+sqlscriptprovider.py       — Парсер SQL-файлів та реєстрація інструментів
+sql_tools/                 — SQL-файли, які стають MCP-інструментами
+  getIndexUsage.sql        — Статистика використання індексів
+  getTableSizes.sql        — Розміри таблиць та використання простору
+  getWaitStats.sql         — Статистика очікувань SQL Server
+  getDatabasePermission.sql       — Права бази даних
+  requiredAdditionalPermission.sql — Крос-схемні/базові залежності
 deploy/
-  install.py               — Інтерактивний інсталятор (SQL-користувачі, конфіг агентів)
+  config_agnet.py          — Реєстрація конфігу агентів (підтримує прапорець --default)
   scripts/
     mcp-database.sql       — DDL-шаблон для користувача/ролі
 tools/
-  execute_query.py         — інструмент executeQuery
-  explain_query.py         — інструмент explainQuery
-  get_database_permission.py       — інструмент getDatabasePermission
-  get_all_database_permission.py   — інструмент getAllDatabasePermission
-  required_additional_permission.py — інструмент requiredAdditionalPermission
+  execute_query.py         — Реалізація інструменту executeQuery
+  explain_query.py         — Інструмент explainQuery (застарілий)
+  get_database_permission.py       — Інструмент getDatabasePermission (застарілий)
+  get_all_database_permission.py   — Інструмент getAllDatabasePermission (застарілий)
+  required_additional_permission.py — Інструмент requiredAdditionalPermission (застарілий)
   sql/
-    get_database_permission.sql      — Запит прав
-    required_additional_permission.sql — Запит залежностей
+    get_database_permission.sql      — Запит прав (застарілий)
+    required_additional_permission.sql — Запит залежностей (застарілий)
+tests/
+  test_sqlscriptprovider.py — Тести для парсера SQL-файлів
 ```
 
 ## Логи

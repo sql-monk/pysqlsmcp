@@ -57,16 +57,26 @@ GRANT IMPERSONATE ON USER::[mcp-YourDatabase] TO [connecting_user];
 
 ### 2. Agent integration
 
-The installer can register pysqlsmcp in agent config files so the MCP server is available immediately.
+The installer can register pysqlsmcp servers in agent config files so the MCP servers are available immediately.
+
+**MCP Servers:**
+- `sqlsmcp.py` — Core server with `executeQuery` tool for ad-hoc SQL queries
+- `sqlscriptmcp.py` — Script server that automatically registers all `.sql` files from `sql_tools/` as MCP tools
 
 It searches for config files:
 
 | Agent | Config file | Key |
 |-------|------------|-----|
-| VS Code | `mcp.json` | `servers.pysqlsmcp` |
-| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp` |
+| VS Code | `mcp.json` | `servers.pysqlsmcp`, `servers.pysqlsmcp-scripts` |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.pysqlsmcp`, `mcpServers.pysqlsmcp-scripts` |
 
-Search starts from `%APPDATA%` (known locations) and a user-specified directory (default: home folder). You can select which found configs to patch.
+Search starts from `%APPDATA%` (known locations) and a user-specified directory (default: home folder). You can select which found configs to patch and which MCP servers to register.
+
+**Quick registration with defaults:**
+```bash
+python deploy/config_agnet.py --default
+```
+This automatically registers all found MCP servers in all found agent configs.
 
 Example resulting VS Code entry (`.vscode/mcp.json`):
 
@@ -77,6 +87,11 @@ Example resulting VS Code entry (`.vscode/mcp.json`):
       "type": "stdio",
       "command": "python",
       "args": ["path/to/pysqlsmcp/sqlsmcp.py"]
+    },
+    "pysqlsmcp-scripts": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["path/to/pysqlsmcp/sqlscriptmcp.py"]
     }
   }
 }
@@ -145,36 +160,80 @@ EXECUTE AS USER = N'{impersonate}'
 
 ## Tools
 
-All tools accept `server` and `impersonate`. Windows Authentication (`Trusted_Connection=yes`) is always used.
+### Core server (`sqlsmcp.py`)
 
 | Tool | Extra parameters | Description |
 |------|-----------------|-------------|
-| `executeQuery` | `database`, `query` | Executes an arbitrary query under impersonation and returns rows + columns as JSON |
-| `explainQuery` | `database`, `query` | Returns the XML execution plan (`SHOWPLAN_XML`) without executing the query |
-| `getDatabasePermission` | `database`, `user_filter?`, `object_filter?` | Lists role memberships and permissions for one database (queries `sys.database_role_members` + `sys.database_permissions`) |
-| `getAllDatabasePermission` | `user_filter?`, `object_filter?` | Runs `getDatabasePermission` across every accessible database and aggregates the results |
-| `requiredAdditionalPermission` | `database`, `object` | Lists cross-schema and cross-database dependencies for a stored procedure or view (via `sys.sql_expression_dependencies`) |
+| `executeQuery` | `database`, `query`, `params?` | Executes an arbitrary query under impersonation and returns rows + columns as JSON |
+
+### Script server (`sqlscriptmcp.py`)
+
+Automatically registers all `.sql` files from `sql_tools/` as MCP tools. Each SQL file becomes a tool with its own parameters.
+
+**SQL file format:**
+```sql
+/*
+Tool description (can be multi-line)
+
+@param_name - parameter description
+@another    - another parameter description
+*/
+
+DECLARE
+    @param_name INT,
+    @another    NVARCHAR(128);
+
+SELECT ... WHERE col = @param_name AND another = @another
+```
+
+**Built-in SQL tools:**
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `getIndexUsage` | `database`, `table_name?` | Get index usage statistics for tables |
+| `getTableSizes` | `database`, `schema_name?`, `table_name?` | Get table sizes including row count and space usage |
+| `getWaitStats` | `database` | Get SQL Server wait statistics |
+| `getDatabasePermission` | `database`, `user_filter?`, `object_filter?` | Lists role memberships and permissions for the database |
+| `requiredAdditionalPermission` | `database`, `object` | Lists cross-schema and cross-database dependencies |
+
+### Legacy tools
+
+The following tools are still available in the `tools/` directory but are no longer part of the core MCP servers:
+- `explainQuery` — Returns the XML execution plan without executing the query
+- `getAllDatabasePermission` — Runs `getDatabasePermission` across all accessible databases
+
+All tools accept `server` and `impersonate` parameters. Windows Authentication (`Trusted_Connection=yes`) is always used.
 
 ---
 
 ## Project structure
 
 ```
-sqlsmcp.py                 — Entry point (stdio transport), registers all tools
+sqlsmcp.py                 — Entry point for core MCP server (executeQuery only)
+sqlscriptmcp.py            — Entry point for script MCP server (auto-loads sql_tools/)
 sqlsprovider.py            — Connection, SET preamble, EXECUTE AS, query execution
+sqlscriptprovider.py       — SQL file parser and tool registration
+sql_tools/                 — SQL files that become MCP tools
+  getIndexUsage.sql        — Index usage statistics
+  getTableSizes.sql        — Table sizes and space usage
+  getWaitStats.sql         — SQL Server wait statistics
+  getDatabasePermission.sql       — Database permissions
+  requiredAdditionalPermission.sql — Cross-schema/database dependencies
 deploy/
-  install.py               — Interactive installer (SQL users, agent config)
+  config_agnet.py          — Agent config registration (supports --default flag)
   scripts/
     mcp-database.sql       — User/role DDL template
 tools/
-  execute_query.py         — executeQuery tool
-  explain_query.py         — explainQuery tool
-  get_database_permission.py       — getDatabasePermission tool
-  get_all_database_permission.py   — getAllDatabasePermission tool
-  required_additional_permission.py — requiredAdditionalPermission tool
+  execute_query.py         — executeQuery tool implementation
+  explain_query.py         — explainQuery tool (legacy)
+  get_database_permission.py       — getDatabasePermission tool (legacy)
+  get_all_database_permission.py   — getAllDatabasePermission tool (legacy)
+  required_additional_permission.py — requiredAdditionalPermission tool (legacy)
   sql/
-    get_database_permission.sql      — Permission query
-    required_additional_permission.sql — Dependency query
+    get_database_permission.sql      — Permission query (legacy)
+    required_additional_permission.sql — Dependency query (legacy)
+tests/
+  test_sqlscriptprovider.py — Tests for SQL file parser
 ```
 
 ## Logs
