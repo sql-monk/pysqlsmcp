@@ -1,4 +1,4 @@
-from db_provider import DbProvider
+from sqlsprovider import SQLSProvider
 
 
 def register(mcp):
@@ -10,5 +10,5 @@ def register(mcp):
         impersonate: str,
         params: list = None,
     ) -> str:
-        db_provider = DbProvider(server, database, impersonate)
+        db_provider = SQLSProvider(server, database, impersonate)
         return db_provider.execute_query(query, params=tuple(params) if params else None, explain=True)

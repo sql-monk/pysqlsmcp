@@ -15,7 +15,7 @@ SET DEADLOCK_PRIORITY LOW;
 """
 
 
-class DbProvider:
+class SQLSProvider:
     def __init__(self, server: str, database: str, impersonate: str = "mcp-server", timeout: int = 90, dbgmode: bool | None = None):
         self._server = server
         self._database = database

@@ -10,6 +10,6 @@ reports/
 *.pem
 *.log
 
-claude.code-workspace
+pysqlsmcp.code-workspace
 .gitignore
 debug.log.md

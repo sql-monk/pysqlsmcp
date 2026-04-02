@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from db_provider import DbProvider
+from sqlsprovider import SQLSProvider
 
 _SQL_DIR = Path(__file__).parent / "sql"
 REQUIRED_PERM_QUERY = (_SQL_DIR / "required_additional_permission.sql").read_text(encoding="utf-8")
@@ -8,7 +8,7 @@ REQUIRED_PERM_QUERY = (_SQL_DIR / "required_additional_permission.sql").read_tex
 _MAX_DEPTH = 10
 
 
-def _run(db_provider: DbProvider, object: str) -> str:
+def _run(db_provider: SQLSProvider, object: str) -> str:
     params = (object,) * 8
     return db_provider.execute_query(REQUIRED_PERM_QUERY, params)
 
@@ -31,7 +31,7 @@ def _run_recursive(server: str, database: str, object: str, impersonate: str) ->
                 continue
             visited.add(key)
 
-            provider = DbProvider(server, db, impersonate)
+            provider = SQLSProvider(server, db, impersonate)
             result = json.loads(_run(provider, obj))
 
             if "error" in result:
