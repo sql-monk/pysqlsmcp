@@ -13,3 +13,4 @@ reports/
 pysqlsmcp.code-workspace
 .gitignore
 debug.log.md
+refactoring-plan.md
