@@ -6,7 +6,8 @@ from sqlsprovider import SQLSProvider
 def _run(db_provider: SQLSProvider, user_filter: Optional[str] = None, object_filter: Optional[str] = None) -> str:
     params = (user_filter, user_filter, object_filter, object_filter, object_filter)
     _path = Path(__file__).parent / "sql"/ "get_database_permission.sql"
-    return db_provider.execute_script(_path, params)
+    query = _path.read_text(encoding="utf-8")
+    return db_provider.execute_query(query, params)
 
 
 def register(mcp):
