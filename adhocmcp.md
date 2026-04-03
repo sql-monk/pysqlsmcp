@@ -19,7 +19,7 @@ adhocmcp.py
  └── FastMCP("pysqlsmcp-adhoc")
       └── AdHocMCPProvider          (adhocmcpprovider.py)
            └── executeQuery tool
-                └── SQLSProvider.execute_query()   (sqlsprovider.py)
+                └── isqls.execute_query()   (isqls.py)
 ```
 
 ### `AdHocMCPProvider` (`adhocmcpprovider.py`)
@@ -27,7 +27,7 @@ adhocmcp.py
 Implements `Provider` from `fastmcp.server.providers`.
 
 Overrides `_list_tools()` to return a single dynamically-built `executeQuery` tool.  
-Each invocation of the tool creates a fresh `SQLSProvider` instance with the supplied connection parameters.
+Each invocation of the tool creates a fresh `isqls` instance with the supplied connection parameters.
 
 ### `adhocmcp.py`
 
@@ -139,7 +139,7 @@ Example tool invocation (JSON):
 The same security model as `sqlsmcp.py` applies:
 
 - **Impersonation** — every query runs under `EXECUTE AS LOGIN = '<impersonate>'`. Grant only the minimum required permissions to the impersonated login.
-- **`REVERT` neutralisation** — the `REVERT` keyword in queries is replaced with `/*revert*/` by `SQLSProvider` to prevent escaping the impersonated context.
+- **`REVERT` neutralisation** — the `REVERT` keyword in queries is replaced with `/*revert*/` by `isqls` to prevent escaping the impersonated context.
 - **Read-Uncommitted isolation** — queries run with `SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED` and `SET LOCK_TIMEOUT 1000` to minimise blocking.
 
 ---
@@ -181,7 +181,7 @@ python tests/run_tests.py --server localhost
 
 | Test class | Scope | Description |
 |---|---|---|
-| `TestAdHocMCPProviderUnit` | Unit | Provider API, tool schema, delegation to SQLSProvider |
+| `TestAdHocMCPProviderUnit` | Unit | Provider API, tool schema, delegation to isqls |
 | `TestAdHocMCPServerUnit` | Unit | FastMCP server integration, tool routing |
 | `TestAdHocMCPProviderIntegration` | Integration | Live SQL Server queries via provider tool |
 

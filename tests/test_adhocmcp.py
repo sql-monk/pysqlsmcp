@@ -3,7 +3,7 @@
 Unit tests (no SQL Server required):
   - Provider returns exactly one tool named 'executeQuery'
   - Tool schema matches expected parameters
-  - Tool delegates to SQLSProvider.execute_query with correct arguments
+  - Tool delegates to isqls.execute_query with correct arguments
   - FastMCP server exposes the tool via the provider
 
 Integration tests (require SQL Server — use PYSQLSMCP_TEST_SERVER env var):
@@ -78,11 +78,11 @@ class TestAdHocMCPProviderUnit:
         assert "params" in schema.get("properties", {})
         assert "params" not in schema.get("required", [])
 
-    def test_tool_delegates_to_sqlsprovider(self):
-        """executeQuery tool must delegate to SQLSProvider.execute_query."""
+    def test_tool_delegates_to_isqls(self):
+        """executeQuery tool must delegate to isqls.execute_query."""
         fake_result = json.dumps({"query": "SELECT 1", "rowCount": 1, "columns": ["x"], "rows": [[1]]})
 
-        with patch("adhocmcpprovider.SQLSProvider") as MockProvider:
+        with patch("adhocmcpprovider.isqls") as MockProvider:
             mock_instance = MagicMock()
             mock_instance.execute_query.return_value = fake_result
             MockProvider.return_value = mock_instance
@@ -103,7 +103,7 @@ class TestAdHocMCPProviderUnit:
         """Params list must be converted to tuple before passing to execute_query."""
         fake_result = json.dumps({"query": "SELECT ?", "rowCount": 1, "columns": ["x"], "rows": [["a"]]})
 
-        with patch("adhocmcpprovider.SQLSProvider") as MockProvider:
+        with patch("adhocmcpprovider.isqls") as MockProvider:
             mock_instance = MagicMock()
             mock_instance.execute_query.return_value = fake_result
             MockProvider.return_value = mock_instance
@@ -121,7 +121,7 @@ class TestAdHocMCPProviderUnit:
         """When params is None (omitted), execute_query receives None."""
         fake_result = json.dumps({"query": "SELECT 42", "rowCount": 1, "columns": ["v"], "rows": [[42]]})
 
-        with patch("adhocmcpprovider.SQLSProvider") as MockProvider:
+        with patch("adhocmcpprovider.isqls") as MockProvider:
             mock_instance = MagicMock()
             mock_instance.execute_query.return_value = fake_result
             MockProvider.return_value = mock_instance
@@ -155,7 +155,7 @@ class TestAdHocMCPServerUnit:
         """Calling executeQuery on the server must route through the provider."""
         fake_result = json.dumps({"query": "SELECT 1", "rowCount": 0})
 
-        with patch("adhocmcpprovider.SQLSProvider") as MockProvider:
+        with patch("adhocmcpprovider.isqls") as MockProvider:
             mock_instance = MagicMock()
             mock_instance.execute_query.return_value = fake_result
             MockProvider.return_value = mock_instance
@@ -205,7 +205,7 @@ class TestAdHocMCPProviderIntegration:
         assert result["rows"][0][0] == 1
 
     def test_execute_query_with_params(self, server, main_db, impersonate):
-        """Provider tool forwards params correctly to SQLSProvider."""
+        """Provider tool forwards params correctly to isqls."""
         provider = AdHocMCPProvider()
         tools = _run(provider._list_tools())
         tool = tools[0]

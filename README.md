@@ -88,7 +88,7 @@ Example resulting VS Code entry (`.vscode/mcp.json`):
 
 ### SET preamble
 
-Every query session begins with a forced preamble (`_SET_PREAMBLE` in `sqlsprovider.py`):
+Every query session begins with a forced preamble (`_SET_PREAMBLE` in `isqls.py`):
 
 ```sql
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -116,7 +116,7 @@ This returns the XML execution plan without running the query.
 
 ### Impersonation (`EXECUTE AS`)
 
-Impersonation is the core security mechanism. The connecting login (e.g. Windows auth or SQL auth) is **never** the identity that runs user queries. Instead, `SQLSProvider` immediately switches context after the SET preamble.
+Impersonation is the core security mechanism. The connecting login (e.g. Windows auth or SQL auth) is **never** the identity that runs user queries. Instead, `isqls` immediately switches context after the SET preamble.
 
 Every tool requires an `impersonate` parameter — the name of the database user to impersonate:
 
@@ -161,7 +161,7 @@ All tools accept `server` and `impersonate`. Windows Authentication (`Trusted_Co
 
 ```
 sqlsmcp.py                 — Entry point (stdio transport), registers all tools
-sqlsprovider.py            — Connection, SET preamble, EXECUTE AS, query execution
+isqls.py            — Connection, SET preamble, EXECUTE AS, query execution
 deploy/
   install.py               — Interactive installer (SQL users, agent config)
   scripts/

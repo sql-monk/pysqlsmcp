@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlsprovider import SQLSProvider
+from isqls import isqls
 
 
 def register(mcp):
@@ -11,5 +11,5 @@ def register(mcp):
         impersonate: str,
         params: Optional[list] = None,
     ) -> str:
-        db_provider = SQLSProvider(server, database, impersonate)
+        db_provider = isqls(server, database, impersonate)
         return db_provider.execute_query(query, tuple(params) if params else None)

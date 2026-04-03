@@ -14,8 +14,8 @@ SET LOCK_TIMEOUT 1000;
 SET DEADLOCK_PRIORITY LOW;
 """
 
-
-class SQLSProvider:
+# impersonated sqlserver
+class isqls:
     def __init__(self, server: str, database: str, impersonate: str = "mcp-server", timeout: int = 90, dbgmode: bool | None = None):
         self._server = server
         self._database = database

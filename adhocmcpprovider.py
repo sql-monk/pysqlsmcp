@@ -3,7 +3,7 @@ from typing import Optional, Sequence
 from fastmcp.server.providers import Provider
 from fastmcp.tools.base import Tool
 
-from sqlsprovider import SQLSProvider
+from isqls import isqls
 
 
 class AdHocMCPProvider(Provider):
@@ -34,7 +34,7 @@ class AdHocMCPProvider(Provider):
             Returns:
                 JSON string with query results or error details.
             """
-            db = SQLSProvider(server, database, impersonate)
+            db = isqls(server, database, impersonate)
             return db.execute_query(query, tuple(params) if params else None)
 
         return [
