@@ -22,14 +22,14 @@ SET DEADLOCK_PRIORITY LOW;
 class isqls:
     def __init__(self, server: str, database: str, impersonate: str = "mcp-server",
                  timeout: int = 90, dbgmode: bool | None = None,
-                 use_login: bool = False, max_rows: int = 5000):
+                 use_login: bool = True, max_rows: int = 5000):
         if not _IMPERSONATE_RE.match(impersonate):
             raise ValueError(f"Invalid impersonate name: {impersonate!r}. Must match 'mcp-<name>' pattern.")
         self._server = server
         self._database = database
         self._impersonate = impersonate
         self._timeout = timeout
-        self._dbgmode = dbgmode if dbgmode is not None else os.environ.get("PYSQLSMCP_DBG", "").lower() in ("1", "true")
+        self._dbgmode = dbgmode if dbgmode is not None else os.environ.get("isqls_dbg", "").lower() in ("1", "true")
         self._use_login = use_login
         self._max_rows = max_rows
 
