@@ -27,22 +27,22 @@ class isqls:
             raise ValueError(f"Invalid impersonate name: {impersonate!r}. Must match 'mcp-<name>' pattern.")
         self._server = server
         self._database = database
-        self._impersonate = impersonate
+        self._impersonate_name = impersonate
         self._timeout = timeout
         self._dbgmode = dbgmode if dbgmode is not None else os.environ.get("isqls_dbg", "").lower() in ("1", "true")
         self._use_login = use_login
         self._max_rows = max_rows
+        self._connection_string = f"SERVER={server};DATABASE={database};Trusted_Connection=yes;TrustServerCertificate=yes;"
 
-    def _connection_string(self) -> str:
-        return (
-            f"SERVER={self._server};DATABASE={self._database};Trusted_Connection=yes;TrustServerCertificate=yes;"
-        )
-
-    def _impersonate_sql(self) -> str:
-        name = self._impersonate.replace("'", "''")
+    def _impersonate(self, cursor) -> bool:
+        name = self._impersonate_name.replace("'", "''")
         if self._use_login:
-            return f"EXECUTE AS LOGIN = N'{name}';\nSELECT SYSTEM_USER AS impersonat_check;"
-        return f"EXECUTE AS USER = N'{name}';\nSELECT USER_NAME() AS impersonat_check;"
+            sql = f"EXECUTE AS LOGIN = N'{name}';\nSELECT SYSTEM_USER AS impersonat_check;"
+        else:
+            sql = f"EXECUTE AS USER = N'{name}';\nSELECT USER_NAME() AS impersonat_check;"
+        cursor.execute(sql)
+        row = cursor.fetchone()
+        return bool(row and row[0].lower() == self._impersonate_name.lower())
 
     def _log(self, query: str, message: str = "", params: tuple | None = None, type: str = "COMPLETE") -> None:
         if not self._dbgmode:
@@ -79,14 +79,12 @@ class isqls:
         if rejection:
             return json.dumps({"error": rejection, "query": query})
         try:
-            conn = mssql_python.connect(self._connection_string())
+            conn = mssql_python.connect(self._connection_string)
             conn.timeout = self._timeout
             try:
                 cursor = conn.cursor()
                 cursor.execute(_SET_PREAMBLE)
-                cursor.execute(self._impersonate_sql())
-                rowImp = cursor.fetchone()
-                if rowImp and rowImp[0].lower() == self._impersonate.lower():
+                if self._impersonate(cursor):
                     cursor.execute(query, params or ())
                     if cursor.description:
                         rows = cursor.fetchmany(self._max_rows + 1)

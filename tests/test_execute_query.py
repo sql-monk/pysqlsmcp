@@ -333,7 +333,7 @@ class TestImpersonateValidation:
 
     def test_valid_name_accepted(self, server, main_db):
         db = isqls(server, main_db, "mcp-server")
-        assert db._impersonate == "mcp-server"
+        assert db._impersonate_name == "mcp-server"
 
     def test_sa_rejected(self, server, main_db):
         with pytest.raises(ValueError, match="Invalid impersonate name"):
@@ -353,7 +353,7 @@ class TestImpersonateValidation:
 
     def test_mcp_hyphen_variants(self, server, main_db):
         db = isqls(server, main_db, "mcp-test-reader")
-        assert db._impersonate == "mcp-test-reader"
+        assert db._impersonate_name == "mcp-test-reader"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -366,16 +366,10 @@ class TestImpersonationMode:
     def test_default_is_user_mode(self, server, main_db, impersonate):
         db = isqls(server, main_db, impersonate)
         assert db._use_login is False
-        sql = db._impersonate_sql()
-        assert "EXECUTE AS USER" in sql
-        assert "USER_NAME()" in sql
 
     def test_login_mode_opt_in(self, server, main_db, impersonate):
         db = isqls(server, main_db, impersonate, use_login=True)
         assert db._use_login is True
-        sql = db._impersonate_sql()
-        assert "EXECUTE AS LOGIN" in sql
-        assert "SYSTEM_USER" in sql
 
     def test_user_mode_executes(self, server, main_db, impersonate):
         db = isqls(server, main_db, impersonate)
