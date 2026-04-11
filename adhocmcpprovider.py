@@ -21,6 +21,8 @@ class AdHocMCPProvider(Provider):
             query: str,
             impersonate: str,
             params: Optional[list] = None,
+            use_login: bool = False,
+            max_rows: int = 5000,
         ) -> str:
             """Execute a SQL query against a specified SQL Server database.
 
@@ -28,13 +30,15 @@ class AdHocMCPProvider(Provider):
                 server: SQL Server instance name or address.
                 database: Target database name.
                 query: SQL query to execute.
-                impersonate: SQL Server login to impersonate via EXECUTE AS LOGIN.
+                impersonate: SQL Server login to impersonate via EXECUTE AS.
                 params: Optional list of positional query parameters (DB-API '?' placeholders).
+                use_login: If True, use EXECUTE AS LOGIN (server-scope). Default is EXECUTE AS USER (database-scope).
+                max_rows: Maximum rows to return (default 5000).
 
             Returns:
                 JSON string with query results or error details.
             """
-            db = isqls(server, database, impersonate)
+            db = isqls(server, database, impersonate, use_login=use_login, max_rows=max_rows)
             return db.execute_query(query, tuple(params) if params else None)
 
         return [

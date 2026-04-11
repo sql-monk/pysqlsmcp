@@ -293,15 +293,122 @@ class TestViewDatabaseSecurityState:
 # ═══════════════════════════════════════════════════════════════
 
 class TestSecurityRevert:
-    """REVERT keyword is neutralised to prevent escaping impersonation."""
+    """REVERT keyword is rejected to prevent escaping impersonation."""
 
-    def test_revert_keyword_neutralised(self, server, main_db, impersonate):
+    def test_revert_keyword_rejected(self, server, main_db, impersonate):
         db = isqls(server, main_db, impersonate)
         result = json.loads(db.execute_query("REVERT; SELECT 1 AS x"))
-        # REVERT replaced with /*revert*/, query still runs
-        assert True  # no crash
+        assert "error" in result
+        assert "REVERT" in result["error"]
+
+    def test_revert_case_insensitive(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        result = json.loads(db.execute_query("revert; SELECT 1 AS x"))
+        assert "error" in result
+
+    def test_revert_unicode_fullwidth(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        result = json.loads(db.execute_query("\uff32\uff25\uff36\uff25\uff32\uff34; SELECT 1 AS x"))
+        assert "error" in result
+
+    def test_revert_char_construction(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        result = json.loads(db.execute_query(
+            "EXEC(''+CHAR(82)+CHAR(69)+CHAR(86)+CHAR(69)+CHAR(82)+CHAR(84))"
+        ))
+        assert "error" in result
 
     def test_revert_as_string_literal(self, server, main_db, impersonate):
         db = isqls(server, main_db, impersonate)
-        result = json.loads(db.execute_query("SELECT '/*revert*/' AS word"))
+        result = json.loads(db.execute_query("SELECT 'no_revert_here' AS word"))
         assert "error" not in result
+
+
+# ═══════════════════════════════════════════════════════════════
+#   Security: impersonate name validation
+# ═══════════════════════════════════════════════════════════════
+
+class TestImpersonateValidation:
+    """Impersonate name must match mcp-* pattern."""
+
+    def test_valid_name_accepted(self, server, main_db):
+        db = isqls(server, main_db, "mcp-server")
+        assert db._impersonate == "mcp-server"
+
+    def test_sa_rejected(self, server, main_db):
+        with pytest.raises(ValueError, match="Invalid impersonate name"):
+            isqls(server, main_db, "sa")
+
+    def test_empty_rejected(self, server, main_db):
+        with pytest.raises(ValueError, match="Invalid impersonate name"):
+            isqls(server, main_db, "")
+
+    def test_arbitrary_name_rejected(self, server, main_db):
+        with pytest.raises(ValueError, match="Invalid impersonate name"):
+            isqls(server, main_db, "admin")
+
+    def test_mcp_prefix_required(self, server, main_db):
+        with pytest.raises(ValueError, match="Invalid impersonate name"):
+            isqls(server, main_db, "not-mcp-server")
+
+    def test_mcp_hyphen_variants(self, server, main_db):
+        db = isqls(server, main_db, "mcp-test-reader")
+        assert db._impersonate == "mcp-test-reader"
+
+
+# ═══════════════════════════════════════════════════════════════
+#   Security: EXECUTE AS USER (default) vs LOGIN
+# ═══════════════════════════════════════════════════════════════
+
+class TestImpersonationMode:
+    """EXECUTE AS USER is default; LOGIN is opt-in."""
+
+    def test_default_is_user_mode(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        assert db._use_login is False
+        sql = db._impersonate_sql()
+        assert "EXECUTE AS USER" in sql
+        assert "USER_NAME()" in sql
+
+    def test_login_mode_opt_in(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate, use_login=True)
+        assert db._use_login is True
+        sql = db._impersonate_sql()
+        assert "EXECUTE AS LOGIN" in sql
+        assert "SYSTEM_USER" in sql
+
+    def test_user_mode_executes(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        result = json.loads(db.execute_query("SELECT USER_NAME() AS CurrentUser"))
+        assert "error" not in result, f"EXECUTE AS USER failed: {result.get('error')}"
+
+
+# ═══════════════════════════════════════════════════════════════
+#   Row limit (max_rows)
+# ═══════════════════════════════════════════════════════════════
+
+class TestRowLimit:
+    """Results are truncated at max_rows."""
+
+    def test_default_max_rows(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate)
+        assert db._max_rows == 5000
+
+    def test_custom_max_rows(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate, max_rows=2)
+        result = json.loads(db.execute_query(
+            "SELECT name FROM sys.columns"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] <= 2
+        assert result.get("truncated") is True
+        assert result.get("maxRows") == 2
+
+    def test_under_limit_no_truncation(self, server, main_db, impersonate):
+        db = isqls(server, main_db, impersonate, max_rows=10000)
+        result = json.loads(db.execute_query(
+            "SELECT TOP 3 name FROM sys.tables"
+        ))
+        assert "error" not in result
+        assert result["rowCount"] == 3
+        assert "truncated" not in result

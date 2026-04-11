@@ -31,7 +31,7 @@ def _run_recursive(server: str, database: str, object: str, impersonate: str) ->
                 continue
             visited.add(key)
 
-            provider = isqls(server, db, impersonate)
+            provider = isqls(server, db, impersonate, use_login=True)
             result = json.loads(_run(provider, obj))
 
             if "error" in result:

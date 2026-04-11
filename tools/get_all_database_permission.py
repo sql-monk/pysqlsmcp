@@ -7,7 +7,7 @@ from tools.get_database_permission import _run as run_permission
 def register(mcp):
     @mcp.tool()
     def getAllDatabasePermission(server: str, impersonate: str, user_filter: Optional[str] = None, object_filter: Optional[str] = None) -> str:
-        master = isqls(server, "master", impersonate)
+        master = isqls(server, "master", impersonate, use_login=True)
         databases = master.list_databases()
         all_rows: list = []
         all_columns: list = []
